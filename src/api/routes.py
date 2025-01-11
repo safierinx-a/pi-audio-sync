@@ -24,10 +24,11 @@ class BluetoothAgent(dbus.service.Object):
     """Bluetooth agent for handling pairing requests"""
 
     AGENT_PATH = "/org/bluez/agent"
-    CAPABILITY = "NoInputNoOutput"
+    CAPABILITY = "KeyboardDisplay"
 
     def __init__(self, bus):
         super().__init__(bus, self.AGENT_PATH)
+        self.bus = bus
         self.mainloop = GLib.MainLoop()
 
     @dbus.service.method("org.bluez.Agent1", in_signature="os", out_signature="")
@@ -50,8 +51,23 @@ class BluetoothAgent(dbus.service.Object):
 
     @dbus.service.method("org.bluez.Agent1", in_signature="ou", out_signature="")
     def RequestConfirmation(self, device, passkey):
-        logger.info(f"Auto-confirming passkey {passkey} for device {device}")
-        return  # Auto-confirm by returning immediately
+        logger.info(f"Confirming passkey {passkey} for device {device}")
+        try:
+            # Get the device object
+            device_obj = self.bus.get_object("org.bluez", device)
+            device_iface = dbus.Interface(device_obj, "org.bluez.Device1")
+
+            # Trust and pair the device
+            props = dbus.Interface(device_obj, "org.freedesktop.DBus.Properties")
+            props.Set("org.bluez.Device1", "Trusted", dbus.Boolean(True))
+
+            # Send positive confirmation
+            device_iface.Connect()
+            logger.info(f"Successfully confirmed and connected device {device}")
+            return
+        except Exception as e:
+            logger.error(f"Error confirming device: {e}")
+            raise
 
     @dbus.service.method("org.bluez.Agent1", in_signature="o", out_signature="u")
     def RequestPasskey(self, device):
