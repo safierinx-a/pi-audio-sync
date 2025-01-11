@@ -53,18 +53,13 @@ class BluetoothAgent(dbus.service.Object):
     def RequestConfirmation(self, device, passkey):
         logger.info(f"Confirming passkey {passkey} for device {device}")
         try:
-            # Get the device object
+            # Get the device object and trust it
             device_obj = self.bus.get_object("org.bluez", device)
-            device_iface = dbus.Interface(device_obj, "org.bluez.Device1")
             props = dbus.Interface(device_obj, "org.freedesktop.DBus.Properties")
-
-            # Trust the device
             props.Set("org.bluez.Device1", "Trusted", dbus.Boolean(True))
 
-            # Use bluetoothctl to confirm the passkey
-            subprocess.run(["bluetoothctl", "confirm", str(passkey)], check=True)
-
-            logger.info(f"Successfully confirmed passkey {passkey} for device {device}")
+            # Auto-confirm by returning immediately
+            logger.info(f"Auto-confirmed passkey {passkey}")
             return
         except Exception as e:
             logger.error(f"Error confirming passkey: {e}")
