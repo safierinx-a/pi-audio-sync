@@ -48,6 +48,21 @@ class BluetoothAgent(dbus.service.Object):
         logger.info("Request canceled")
         return
 
+    @dbus.service.method("org.bluez.Agent1", in_signature="ou", out_signature="")
+    def RequestConfirmation(self, device, passkey):
+        logger.info(f"Auto-confirming passkey {passkey} for device {device}")
+        return  # Auto-confirm by returning immediately
+
+    @dbus.service.method("org.bluez.Agent1", in_signature="o", out_signature="u")
+    def RequestPasskey(self, device):
+        logger.info(f"Returning fixed passkey for device {device}")
+        return dbus.UInt32(0)  # Return a fixed passkey
+
+    @dbus.service.method("org.bluez.Agent1", in_signature="o", out_signature="s")
+    def RequestPinCode(self, device):
+        logger.info(f"Returning fixed PIN for device {device}")
+        return "0000"  # Return a fixed PIN
+
 
 async def get_audio_manager() -> AudioManager:
     """Get or create AudioManager instance"""
