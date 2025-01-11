@@ -12,13 +12,18 @@ ensure_audio() {
     
     # Get the actual username (not sudo user)
     REAL_USER=$(who | awk '{print $1}' | head -n1)
+    USER_ID=$(id -u $REAL_USER)
+    
+    # Set up D-Bus environment
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus"
+    export XDG_RUNTIME_DIR="/run/user/$USER_ID"
     
     # Configure Bluetooth audio
     mkdir -p /etc/bluetooth
     cat > /etc/bluetooth/main.conf << EOF
 [General]
 Name = Pi Audio Sync
-Class = 0x240404
+Class = 0x6c0404
 DiscoverableTimeout = 0
 PairableTimeout = 0
 FastConnectable = true
@@ -30,37 +35,42 @@ ReconnectAttempts=7
 ReconnectIntervals=1,2,4,8,16,32,64
 EOF
 
-    # Configure Bluetooth audio profiles
-    mkdir -p /etc/bluetooth/audio
-    cat > /etc/bluetooth/audio/config << EOF
-[General]
-Enable=Source,Sink,Media,Socket
-Disable=Gateway,Control,Headset
-
-[A2DP]
-SBCSources=1
-SBCSinks=1
-AACPSources=1
-AACPSinks=1
+    # Configure PipeWire environment
+    mkdir -p /home/$REAL_USER/.config/pipewire/media-session.d
+    cat > /home/$REAL_USER/.config/pipewire/media-session.d/bluez-monitor.conf << EOF
+{
+ "bluez5.enable-sbc-xq": true,
+ "bluez5.enable-msbc": true,
+ "bluez5.enable-hw-volume": true,
+ "bluez5.headset-roles": ["hsp_hs", "hsp_ag", "hfp_hf", "hfp_ag"],
+ "bluez5.codecs": ["sbc_xq", "sbc", "aac"]
+}
 EOF
+    chown -R $REAL_USER:$REAL_USER /home/$REAL_USER/.config/pipewire
 
     # Add user to required groups
     usermod -a -G bluetooth $REAL_USER
     usermod -a -G audio $REAL_USER
     
-    # Restart bluetooth to apply changes
+    # Stop services
     systemctl stop bluetooth
+    sudo -u $REAL_USER DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user stop pipewire pipewire-pulse
+    sleep 2
+    
+    # Start services in correct order
+    sudo -u $REAL_USER DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user start pipewire
+    sleep 1
+    sudo -u $REAL_USER DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user start pipewire-pulse
     sleep 2
     systemctl start bluetooth
     sleep 2
     
-    # Ensure PipeWire is running for the user
-    sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$(id -u $REAL_USER) systemctl --user restart pipewire pipewire-pulse
-    sleep 2
-    
-    # Load Bluetooth modules
-    sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$(id -u $REAL_USER) pactl load-module module-bluetooth-policy
-    sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$(id -u $REAL_USER) pactl load-module module-bluetooth-discover
+    # Set Bluetooth class manually
+    hciconfig hci0 down
+    sleep 1
+    hciconfig hci0 class 0x6c0404
+    hciconfig hci0 up
+    sleep 1
     
     echo "Audio system configured"
 }
@@ -74,29 +84,38 @@ enable_pairing() {
     
     echo "Initializing Bluetooth..."
     
-    # Configure Bluetooth
-    bluetoothctl << EOF
-power off
-sleep 2
-power on
-sleep 2
-discoverable on
-pairable on
-agent on
-default-agent
+    # Reset Bluetooth controller
+    echo -e "power off\nquit" | bluetoothctl
+    sleep 2
+    
+    # Configure Bluetooth with proper agent handling
+    expect << EOF
+spawn bluetoothctl
+expect "\[bluetooth\]"
+send "power on\r"
+expect "\[bluetooth\]"
+send "agent on\r"
+expect "\[bluetooth\]"
+send "default-agent\r"
+expect "\[bluetooth\]"
+send "discoverable on\r"
+expect "\[bluetooth\]"
+send "pairable on\r"
+expect "\[bluetooth\]"
+send "quit\r"
+expect eof
 EOF
     
-    # Set audio profile
-    echo "Setting up audio profiles..."
-    bluetoothctl << EOF
-discoverable on
-pairable on
-EOF
-    
-    # Verify power state
+    # Verify settings
     if ! bluetoothctl show | grep -q "Powered: yes"; then
         echo "Error: Bluetooth is not powered on. Retrying..."
         bluetoothctl power on
+        sleep 2
+    fi
+    
+    if ! bluetoothctl show | grep -q "Discoverable: yes"; then
+        echo "Error: Bluetooth is not discoverable. Retrying..."
+        bluetoothctl discoverable on
         sleep 2
     fi
     
@@ -107,12 +126,15 @@ EOF
 
 # Function to get status
 get_status() {
-    # Get the actual username
+    # Get the actual username and ID
     REAL_USER=$(who | awk '{print $1}' | head -n1)
+    USER_ID=$(id -u $REAL_USER)
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus"
+    export XDG_RUNTIME_DIR="/run/user/$USER_ID"
     
     echo "=== System Services Status ==="
     systemctl status bluetooth --no-pager
-    sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$(id -u $REAL_USER) systemctl --user status pipewire pipewire-pulse --no-pager
+    sudo -u $REAL_USER DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user status pipewire pipewire-pulse --no-pager
     
     echo -e "\n=== Bluetooth Controller ==="
     bluetoothctl show | grep -E "Name|Powered|Discoverable|Pairable|Alias|UUID|Class"
@@ -121,14 +143,21 @@ get_status() {
     bluetoothctl devices Connected
     
     echo -e "\n=== Audio Devices ==="
-    sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$(id -u $REAL_USER) pw-cli list-objects | grep -A 2 "bluetooth"
+    sudo -u $REAL_USER pw-cli list-objects | grep -A 2 "bluetooth"
     
     echo -e "\n=== PipeWire Audio Sinks ==="
-    sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$(id -u $REAL_USER) pactl list sinks short
+    sudo -u $REAL_USER pactl list sinks short
     
     echo -e "\n=== Bluetooth Audio Status ==="
     hcitool dev
     echo "Audio Class: $(hciconfig hci0 class | grep 'Class' | awk '{print $2}')"
+    
+    echo -e "\n=== Debug Information ==="
+    echo "XDG_RUNTIME_DIR: $XDG_RUNTIME_DIR"
+    echo "DBUS_SESSION_BUS_ADDRESS: $DBUS_SESSION_BUS_ADDRESS"
+    echo "User ID: $USER_ID"
+    echo "Real User: $REAL_USER"
+    ls -la $XDG_RUNTIME_DIR/pulse || true
 }
 
 # Handle command line arguments
