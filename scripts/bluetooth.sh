@@ -10,16 +10,8 @@ fi
 ensure_audio() {
     echo "Setting up audio system..."
     
-    # Stop any existing audio services
-    systemctl --user stop pulseaudio.service pulseaudio.socket || true
-    systemctl --global disable pulseaudio.service pulseaudio.socket || true
-    pkill -9 pulseaudio || true
-    sleep 2
-    
-    # Enable PipeWire services
-    systemctl --user enable pipewire pipewire-pulse
-    systemctl --user start pipewire pipewire-pulse
-    sleep 2
+    # Get the actual username (not sudo user)
+    REAL_USER=$(who | awk '{print $1}' | head -n1)
     
     # Configure Bluetooth audio
     mkdir -p /etc/bluetooth
@@ -28,14 +20,21 @@ ensure_audio() {
 Class = 0x41C
 DiscoverableTimeout = 0
 PairableTimeout = 0
+
+[Policy]
+AutoEnable=true
 EOF
 
     # Add user to required groups
-    usermod -a -G bluetooth $SUDO_USER
-    usermod -a -G audio $SUDO_USER
+    usermod -a -G bluetooth $REAL_USER
+    usermod -a -G audio $REAL_USER
     
     # Restart bluetooth to apply changes
     systemctl restart bluetooth
+    sleep 2
+    
+    # Ensure PipeWire is running for the user
+    sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$(id -u $REAL_USER) systemctl --user restart pipewire pipewire-pulse
     sleep 2
     
     echo "Audio system configured"
@@ -57,6 +56,7 @@ discoverable on
 pairable on
 agent on
 default-agent
+trust BC:D0:74:A3:4D:09
 EOF
     
     echo "Bluetooth is ready for pairing"
@@ -66,9 +66,12 @@ EOF
 
 # Function to get status
 get_status() {
+    # Get the actual username
+    REAL_USER=$(who | awk '{print $1}' | head -n1)
+    
     echo "=== System Services Status ==="
     systemctl status bluetooth --no-pager
-    systemctl --user status pipewire pipewire-pulse --no-pager
+    sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$(id -u $REAL_USER) systemctl --user status pipewire pipewire-pulse --no-pager
     
     echo -e "\n=== Bluetooth Controller ==="
     bluetoothctl show | grep -E "Name|Powered|Discoverable|Pairable|Alias"
@@ -77,7 +80,10 @@ get_status() {
     bluetoothctl devices Connected
     
     echo -e "\n=== Audio Devices ==="
-    pw-cli list-objects | grep -A 2 "bluetooth"
+    sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$(id -u $REAL_USER) pw-cli list-objects | grep -A 2 "bluetooth"
+    
+    echo -e "\n=== PipeWire Audio Sinks ==="
+    sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$(id -u $REAL_USER) pactl list sinks short
 }
 
 # Handle command line arguments
