@@ -61,10 +61,8 @@ class BluetoothAgent(dbus.service.Object):
             # Trust the device
             props.Set("org.bluez.Device1", "Trusted", dbus.Boolean(True))
 
-            # Get the agent manager to confirm the passkey
-            obj = self.bus.get_object("org.bluez", "/org/bluez")
-            agent_manager = dbus.Interface(obj, "org.bluez.AgentManager1")
-            agent_manager.SendConfirmation(device, dbus.UInt32(passkey))
+            # Use bluetoothctl to confirm the passkey
+            subprocess.run(["bluetoothctl", "confirm", str(passkey)], check=True)
 
             logger.info(f"Successfully confirmed passkey {passkey} for device {device}")
             return
