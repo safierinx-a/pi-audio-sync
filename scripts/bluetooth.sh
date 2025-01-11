@@ -6,12 +6,20 @@ ensure_pulseaudio() {
     if ! pulseaudio --check; then
         echo "Starting PulseAudio..."
         # Kill any zombie processes
-        pkill -9 pulseaudio || true
+        sudo pkill -9 pulseaudio || true
         sleep 1
-        # Start PulseAudio in system mode
-        pulseaudio --system --start
+        # Start PulseAudio in system mode with proper permissions
+        sudo -u pulse pulseaudio --system --start
         sleep 2
     fi
+    
+    # Ensure proper permissions
+    sudo usermod -a -G pulse-access $USER
+    sudo usermod -a -G audio $USER
+    
+    # Ensure PulseAudio can access Bluetooth
+    sudo adduser pulse bluetooth
+    sudo adduser $USER bluetooth
 }
 
 # Function to enable pairing mode
@@ -44,9 +52,9 @@ enable_pairing() {
     sudo bluetoothctl pairable on
     sudo bluetoothctl discoverable on
     
-    # Ensure audio profiles are loaded
-    pactl load-module module-bluetooth-policy
-    pactl load-module module-bluetooth-discover
+    # Ensure audio profiles are loaded (as pulse user)
+    sudo -u pulse pactl load-module module-bluetooth-policy
+    sudo -u pulse pactl load-module module-bluetooth-discover
     
     # Start agent with auto-accept
     sudo bluetoothctl agent on
@@ -60,7 +68,7 @@ enable_pairing() {
 # Function to get Bluetooth status
 get_status() {
     echo "=== PulseAudio Status ==="
-    pactl info
+    sudo -u pulse pactl info
     
     echo -e "\n=== System Status ==="
     systemctl status bluetooth --no-pager
@@ -72,7 +80,7 @@ get_status() {
     sudo bluetoothctl devices Connected
     
     echo -e "\n=== Audio Devices ==="
-    pactl list cards | grep -A 2 "bluez"
+    sudo -u pulse pactl list cards | grep -A 2 "bluez"
 }
 
 # Handle command line arguments
