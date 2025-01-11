@@ -14,8 +14,12 @@ from ..models import AudioSource, DeviceState, SystemState, DeviceType
 
 class AudioManager:
     def __init__(self):
-        self.pulse = pulsectl.Pulse("pi-audio-sync")
-        self._init_audio()
+        try:
+            self.pulse = pulsectl.Pulse("pi-audio-sync")
+            self._init_audio()
+        except Exception as e:
+            logger.error(f"Failed to initialize PulseAudio: {e}")
+            raise
 
     def _init_audio(self):
         """Initialize audio devices and combined sink"""
@@ -24,21 +28,41 @@ class AudioManager:
             sinks = self.pulse.sink_list()
             logger.info(f"Found {len(sinks)} audio sinks")
 
-            # Create combined sink if needed
-            combined = next((s for s in sinks if s.name == "combined"), None)
-            if not combined:
-                logger.info("Creating combined sink")
-                slaves = ",".join(s.name for s in sinks)
-                self.pulse.module_load(
-                    "module-combine-sink", f"sink_name=combined slaves={slaves}"
-                )
+            if not sinks:
+                logger.error("No audio sinks found")
+                return
 
-            # Set as default
-            self.pulse.default_set(combined or sinks[0])
+            # Try to find or create combined sink
+            try:
+                combined = next((s for s in sinks if s.name == "combined"), None)
+                if not combined and len(sinks) > 1:
+                    logger.info("Creating combined sink")
+                    sink_names = [s.name for s in sinks]
+                    logger.debug(f"Available sinks: {sink_names}")
+                    self.pulse.module_load(
+                        "module-combine-sink",
+                        f"sink_name=combined slaves={','.join(sink_names)}",
+                    )
+                    logger.info("Combined sink created successfully")
+                elif not combined:
+                    logger.info("Only one sink available, skipping combined sink")
+            except Exception as e:
+                logger.error(f"Failed to create combined sink: {e}")
+                logger.info("Continuing with individual sinks")
+
+            # Set default sink
+            try:
+                default = next(
+                    (s for s in sinks if "bcm2835" in s.name.lower()), sinks[0]
+                )
+                self.pulse.default_set(default)
+                logger.info(f"Set default sink to: {default.name}")
+            except Exception as e:
+                logger.error(f"Failed to set default sink: {e}")
 
         except Exception as e:
             logger.error(f"Error initializing audio: {e}")
-            raise
+            # Don't raise here, let the service continue with limited functionality
 
     def get_devices(self) -> List[DeviceState]:
         """Get list of audio devices"""
@@ -47,7 +71,7 @@ class AudioManager:
             return [
                 DeviceState(
                     id=sink.index,
-                    name=sink.description,
+                    name=sink.description or sink.name,
                     type=DeviceType.USB
                     if "usb" in sink.name.lower()
                     else DeviceType.BUILTIN,
@@ -64,8 +88,10 @@ class AudioManager:
     def set_volume(self, device_id: int, volume: int) -> bool:
         """Set volume for a device"""
         try:
+            volume = max(0, min(100, volume))  # Clamp volume between 0 and 100
             sink = self.pulse.sink_info(device_id)
             self.pulse.volume_set_all_chans(sink, volume / 100)
+            logger.info(f"Set volume to {volume}% for sink {sink.name}")
             return True
         except Exception as e:
             logger.error(f"Error setting volume: {e}")
@@ -76,6 +102,7 @@ class AudioManager:
         try:
             sink = self.pulse.sink_info(device_id)
             self.pulse.mute(sink, muted)
+            logger.info(f"{'Muted' if muted else 'Unmuted'} sink {sink.name}")
             return True
         except Exception as e:
             logger.error(f"Error setting mute: {e}")
