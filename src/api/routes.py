@@ -2,78 +2,16 @@
 API routes for Pi Audio Sync
 """
 
-import os
-import subprocess
-import dbus
-import dbus.service
-import dbus.mainloop.glib
-from gi.repository import GLib
 from fastapi import APIRouter, HTTPException, Depends
 from loguru import logger
+import subprocess
+import os
 
 from ..models import DeviceState, SystemState, VolumeUpdate
 from ..audio import AudioManager
 
 router = APIRouter(prefix="/api/v1")
 _manager: AudioManager = None
-_agent = None
-_adapter = None
-
-
-class BluetoothAgent(dbus.service.Object):
-    """Bluetooth agent for handling pairing requests"""
-
-    AGENT_PATH = "/org/bluez/agent"
-    CAPABILITY = "KeyboardDisplay"
-
-    def __init__(self, bus):
-        super().__init__(bus, self.AGENT_PATH)
-        self.bus = bus
-        self.mainloop = GLib.MainLoop()
-
-    @dbus.service.method("org.bluez.Agent1", in_signature="os", out_signature="")
-    def AuthorizeService(self, device, uuid):
-        logger.info(f"Authorizing service {uuid} for device {device}")
-        # Auto-authorize all audio services
-        if uuid.startswith("0000110"):  # Audio services start with 0x110*
-            return
-        raise dbus.DBusException("org.bluez.Error.Rejected", "Service not supported")
-
-    @dbus.service.method("org.bluez.Agent1", in_signature="o", out_signature="")
-    def RequestAuthorization(self, device):
-        logger.info(f"Authorizing device {device}")
-        return  # Auto-authorize all devices
-
-    @dbus.service.method("org.bluez.Agent1", in_signature="", out_signature="")
-    def Cancel(self):
-        logger.info("Request canceled")
-        return
-
-    @dbus.service.method("org.bluez.Agent1", in_signature="ou", out_signature="")
-    def RequestConfirmation(self, device, passkey):
-        logger.info(f"Confirming passkey {passkey} for device {device}")
-        try:
-            # Get the device object and trust it
-            device_obj = self.bus.get_object("org.bluez", device)
-            props = dbus.Interface(device_obj, "org.freedesktop.DBus.Properties")
-            props.Set("org.bluez.Device1", "Trusted", dbus.Boolean(True))
-
-            # Auto-confirm by returning immediately
-            logger.info(f"Auto-confirmed passkey {passkey}")
-            return
-        except Exception as e:
-            logger.error(f"Error confirming passkey: {e}")
-            raise
-
-    @dbus.service.method("org.bluez.Agent1", in_signature="o", out_signature="u")
-    def RequestPasskey(self, device):
-        logger.info(f"Returning fixed passkey for device {device}")
-        return dbus.UInt32(0)  # Return a fixed passkey
-
-    @dbus.service.method("org.bluez.Agent1", in_signature="o", out_signature="s")
-    def RequestPinCode(self, device):
-        logger.info(f"Returning fixed PIN for device {device}")
-        return "0000"  # Return a fixed PIN
 
 
 async def get_audio_manager() -> AudioManager:
@@ -82,40 +20,6 @@ async def get_audio_manager() -> AudioManager:
     if _manager is None:
         _manager = AudioManager()
     return _manager
-
-
-def get_adapter():
-    """Get the Bluetooth adapter"""
-    global _adapter
-    if _adapter is None:
-        try:
-            bus = dbus.SystemBus()
-            obj = bus.get_object("org.bluez", "/org/bluez/hci0")
-            _adapter = dbus.Interface(obj, "org.bluez.Adapter1")
-        except Exception as e:
-            logger.error(f"Failed to get Bluetooth adapter: {e}")
-            raise
-    return _adapter
-
-
-def register_agent():
-    """Register the Bluetooth agent"""
-    global _agent
-    if _agent is None:
-        try:
-            dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
-            bus = dbus.SystemBus()
-            _agent = BluetoothAgent(bus)
-
-            obj = bus.get_object("org.bluez", "/org/bluez")
-            manager = dbus.Interface(obj, "org.bluez.AgentManager1")
-            manager.RegisterAgent(_agent.AGENT_PATH, _agent.CAPABILITY)
-            manager.RequestDefaultAgent(_agent.AGENT_PATH)
-
-            logger.info("Bluetooth agent registered successfully")
-        except Exception as e:
-            logger.error(f"Failed to register Bluetooth agent: {e}")
-            raise
 
 
 @router.get("/status")
@@ -216,51 +120,40 @@ async def get_hass_states(manager: AudioManager = Depends(get_audio_manager)):
 
 @router.post("/bluetooth/pairing")
 async def enable_pairing_mode(duration: int = 60):
-    """Enable Bluetooth pairing mode for specified duration (seconds)"""
+    """Enable Bluetooth pairing mode for the specified duration."""
     try:
-        # Register agent if not already registered
-        register_agent()
-
-        # Get adapter and its properties interface
-        adapter = get_adapter()
-        props = dbus.Interface(adapter, "org.freedesktop.DBus.Properties")
-
-        # Make sure adapter is powered on
-        props.Set("org.bluez.Adapter1", "Powered", dbus.Boolean(True))
-
-        # Configure adapter properties
-        props.Set("org.bluez.Adapter1", "Discoverable", dbus.Boolean(True))
-        props.Set("org.bluez.Adapter1", "Pairable", dbus.Boolean(True))
-        props.Set("org.bluez.Adapter1", "DiscoverableTimeout", dbus.UInt32(duration))
-        props.Set("org.bluez.Adapter1", "Alias", dbus.String("Pi Audio Sync"))
-
-        # Make sure PulseAudio Bluetooth modules are loaded
-        subprocess.run(["pactl", "load-module", "module-bluetooth-policy"], check=False)
-        subprocess.run(
-            ["pactl", "load-module", "module-bluetooth-discover"], check=False
+        script_path = os.path.join(
+            os.environ.get("INSTALL_DIR", "/opt/pi-audio-sync"), "scripts/bluetooth.sh"
         )
-
-        logger.info(f"Bluetooth pairing mode enabled for {duration} seconds")
-        return {"status": "enabled", "duration": duration}
-    except Exception as e:
-        logger.error(f"Failed to enable pairing mode: {e}")
+        result = subprocess.run(
+            [script_path, "enable", str(duration)],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        logger.info(f"Enabled Bluetooth pairing: {result.stdout}")
+        return {"message": "Pairing mode enabled", "duration": duration}
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Failed to enable pairing mode: {e.stderr}")
         raise HTTPException(status_code=500, detail="Failed to enable pairing mode")
 
 
 @router.get("/bluetooth/status")
 async def get_bluetooth_status():
-    """Get Bluetooth status"""
+    """Get current Bluetooth status."""
     try:
-        adapter = get_adapter()
-        props = dbus.Interface(adapter, "org.freedesktop.DBus.Properties")
-
-        status = {
-            "discoverable": bool(props.Get("org.bluez.Adapter1", "Discoverable")),
-            "powered": bool(props.Get("org.bluez.Adapter1", "Powered")),
-            "name": str(props.Get("org.bluez.Adapter1", "Alias")),
-        }
-
+        script_path = os.path.join(
+            os.environ.get("INSTALL_DIR", "/opt/pi-audio-sync"), "scripts/bluetooth.sh"
+        )
+        result = subprocess.run(
+            [script_path, "status"], capture_output=True, text=True, check=True
+        )
+        status_lines = result.stdout.strip().split("\n")
+        status = {}
+        for line in status_lines:
+            key, value = line.split(":", 1)
+            status[key.strip()] = value.strip()
         return status
-    except Exception as e:
-        logger.error(f"Failed to get Bluetooth status: {e}")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Failed to get Bluetooth status: {e.stderr}")
         raise HTTPException(status_code=500, detail="Failed to get Bluetooth status")

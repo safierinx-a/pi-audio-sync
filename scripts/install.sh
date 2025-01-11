@@ -149,6 +149,10 @@ fi
 # Add sudoers rule for bluetoothctl
 echo "%bluetooth ALL=(ALL) NOPASSWD: /usr/bin/bluetoothctl" | sudo tee /etc/sudoers.d/020_bluetooth-nopasswd
 
+# Copy scripts and make executable
+cp -r scripts/* "${INSTALL_DIR}/scripts/"
+chmod +x "${INSTALL_DIR}/scripts/bluetooth.sh"
+
 echo "Installation complete!"
 echo "Please edit ${INSTALL_DIR}/.env to configure your settings"
 echo "Then start the service with: sudo systemctl start audio-sync@${SUDO_USER}" 
