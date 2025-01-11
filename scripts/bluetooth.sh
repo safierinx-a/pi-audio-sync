@@ -1,8 +1,25 @@
 #!/bin/bash
 
+# Function to ensure PulseAudio is running
+ensure_pulseaudio() {
+    # Check if PulseAudio is running
+    if ! pulseaudio --check; then
+        echo "Starting PulseAudio..."
+        # Kill any zombie processes
+        pkill -9 pulseaudio || true
+        sleep 1
+        # Start PulseAudio in system mode
+        pulseaudio --system --start
+        sleep 2
+    fi
+}
+
 # Function to enable pairing mode
 enable_pairing() {
     local duration=$1
+    
+    echo "Initializing audio system..."
+    ensure_pulseaudio
     
     echo "Initializing Bluetooth..."
     
@@ -28,8 +45,8 @@ enable_pairing() {
     sudo bluetoothctl discoverable on
     
     # Ensure audio profiles are loaded
-    sudo pactl load-module module-bluetooth-policy
-    sudo pactl load-module module-bluetooth-discover
+    pactl load-module module-bluetooth-policy
+    pactl load-module module-bluetooth-discover
     
     # Start agent with auto-accept
     sudo bluetoothctl agent on
@@ -42,7 +59,10 @@ enable_pairing() {
 
 # Function to get Bluetooth status
 get_status() {
-    echo "=== System Status ==="
+    echo "=== PulseAudio Status ==="
+    pactl info
+    
+    echo -e "\n=== System Status ==="
     systemctl status bluetooth --no-pager
     
     echo -e "\n=== Bluetooth Controller ==="
@@ -52,7 +72,7 @@ get_status() {
     sudo bluetoothctl devices Connected
     
     echo -e "\n=== Audio Devices ==="
-    sudo pactl list cards | grep -A 2 "bluez"
+    pactl list cards | grep -A 2 "bluez"
 }
 
 # Handle command line arguments
