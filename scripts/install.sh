@@ -48,13 +48,17 @@ su - ${SUDO_USER} -c "cd ${INSTALL_DIR} && ./venv/bin/pip install -r requirement
 echo "Configuring PulseAudio..."
 cp ${INSTALL_DIR}/config/pulse/default.pa /etc/pulse/default.pa
 cp ${INSTALL_DIR}/config/pulse/daemon.conf /etc/pulse/daemon.conf
-systemctl --user restart pulseaudio
+
+# Restart PulseAudio for the user
+echo "Restarting PulseAudio..."
+su - ${SUDO_USER} -c "pulseaudio -k || true"  # Kill existing PulseAudio
+su - ${SUDO_USER} -c "pulseaudio --start"     # Start PulseAudio
 
 # Copy and enable systemd service
 echo "Setting up systemd service..."
 cp ${INSTALL_DIR}/scripts/audio-sync.service /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable audio-sync.service
+systemctl enable audio-sync@${SUDO_USER}.service
 
 # Create environment file if it doesn't exist
 if [ ! -f "${INSTALL_DIR}/.env" ]; then
@@ -65,4 +69,4 @@ fi
 
 echo "Installation complete!"
 echo "Please edit ${INSTALL_DIR}/.env to configure your settings"
-echo "Then start the service with: sudo systemctl start audio-sync" 
+echo "Then start the service with: sudo systemctl start audio-sync@${SUDO_USER}" 
