@@ -11,7 +11,9 @@ from .audio import AudioManager
 from .api import router
 
 # Configure logging
-logger.add("/var/log/pi-audio-sync.log", rotation="10 MB")
+log_dir = os.path.expanduser("~/.local/log")
+os.makedirs(log_dir, exist_ok=True)
+logger.add(f"{log_dir}/pi-audio-sync.log", rotation="10 MB")
 
 # Create FastAPI app
 app = FastAPI(title="Pi Audio Sync")
