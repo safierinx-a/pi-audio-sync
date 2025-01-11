@@ -17,24 +17,25 @@ ensure_audio() {
     mkdir -p /etc/bluetooth
     cat > /etc/bluetooth/main.conf << EOF
 [General]
-Class = 0x41C
+Name = Pi Audio Sync
+Class = 0x240404
 DiscoverableTimeout = 0
 PairableTimeout = 0
 FastConnectable = true
+Privacy = off
 
 [Policy]
 AutoEnable=true
 ReconnectAttempts=7
 ReconnectIntervals=1,2,4,8,16,32,64
-
-[Policy]
-AutoEnable=true
 EOF
 
     # Configure Bluetooth audio profiles
-    cat > /etc/bluetooth/audio.conf << EOF
+    mkdir -p /etc/bluetooth/audio
+    cat > /etc/bluetooth/audio/config << EOF
 [General]
 Enable=Source,Sink,Media,Socket
+Disable=Gateway,Control,Headset
 
 [A2DP]
 SBCSources=1
@@ -48,7 +49,9 @@ EOF
     usermod -a -G audio $REAL_USER
     
     # Restart bluetooth to apply changes
-    systemctl restart bluetooth
+    systemctl stop bluetooth
+    sleep 2
+    systemctl start bluetooth
     sleep 2
     
     # Ensure PipeWire is running for the user
@@ -74,22 +77,28 @@ enable_pairing() {
     # Configure Bluetooth
     bluetoothctl << EOF
 power off
+sleep 2
 power on
+sleep 2
 discoverable on
 pairable on
 agent on
 default-agent
-trust BC:D0:74:A3:4D:09
 EOF
     
     # Set audio profile
     echo "Setting up audio profiles..."
     bluetoothctl << EOF
-menu audio
 discoverable on
 pairable on
-show
 EOF
+    
+    # Verify power state
+    if ! bluetoothctl show | grep -q "Powered: yes"; then
+        echo "Error: Bluetooth is not powered on. Retrying..."
+        bluetoothctl power on
+        sleep 2
+    fi
     
     echo "Bluetooth is ready for pairing"
     echo "The device will remain discoverable indefinitely"
@@ -106,20 +115,20 @@ get_status() {
     sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$(id -u $REAL_USER) systemctl --user status pipewire pipewire-pulse --no-pager
     
     echo -e "\n=== Bluetooth Controller ==="
-    bluetoothctl show | grep -E "Name|Powered|Discoverable|Pairable|Alias|UUID"
+    bluetoothctl show | grep -E "Name|Powered|Discoverable|Pairable|Alias|UUID|Class"
     
     echo -e "\n=== Connected Devices ==="
     bluetoothctl devices Connected
-    
-    echo -e "\n=== Audio Profiles ==="
-    bluetoothctl menu audio
-    bluetoothctl show
     
     echo -e "\n=== Audio Devices ==="
     sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$(id -u $REAL_USER) pw-cli list-objects | grep -A 2 "bluetooth"
     
     echo -e "\n=== PipeWire Audio Sinks ==="
     sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$(id -u $REAL_USER) pactl list sinks short
+    
+    echo -e "\n=== Bluetooth Audio Status ==="
+    hcitool dev
+    echo "Audio Class: $(hciconfig hci0 class | grep 'Class' | awk '{print $2}')"
 }
 
 # Handle command line arguments
