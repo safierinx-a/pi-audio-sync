@@ -20,9 +20,27 @@ ensure_audio() {
 Class = 0x41C
 DiscoverableTimeout = 0
 PairableTimeout = 0
+FastConnectable = true
 
 [Policy]
 AutoEnable=true
+ReconnectAttempts=7
+ReconnectIntervals=1,2,4,8,16,32,64
+
+[Policy]
+AutoEnable=true
+EOF
+
+    # Configure Bluetooth audio profiles
+    cat > /etc/bluetooth/audio.conf << EOF
+[General]
+Enable=Source,Sink,Media,Socket
+
+[A2DP]
+SBCSources=1
+SBCSinks=1
+AACPSources=1
+AACPSinks=1
 EOF
 
     # Add user to required groups
@@ -36,6 +54,10 @@ EOF
     # Ensure PipeWire is running for the user
     sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$(id -u $REAL_USER) systemctl --user restart pipewire pipewire-pulse
     sleep 2
+    
+    # Load Bluetooth modules
+    sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$(id -u $REAL_USER) pactl load-module module-bluetooth-policy
+    sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$(id -u $REAL_USER) pactl load-module module-bluetooth-discover
     
     echo "Audio system configured"
 }
@@ -51,12 +73,22 @@ enable_pairing() {
     
     # Configure Bluetooth
     bluetoothctl << EOF
+power off
 power on
 discoverable on
 pairable on
 agent on
 default-agent
 trust BC:D0:74:A3:4D:09
+EOF
+    
+    # Set audio profile
+    echo "Setting up audio profiles..."
+    bluetoothctl << EOF
+menu audio
+discoverable on
+pairable on
+show
 EOF
     
     echo "Bluetooth is ready for pairing"
@@ -74,10 +106,14 @@ get_status() {
     sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$(id -u $REAL_USER) systemctl --user status pipewire pipewire-pulse --no-pager
     
     echo -e "\n=== Bluetooth Controller ==="
-    bluetoothctl show | grep -E "Name|Powered|Discoverable|Pairable|Alias"
+    bluetoothctl show | grep -E "Name|Powered|Discoverable|Pairable|Alias|UUID"
     
     echo -e "\n=== Connected Devices ==="
     bluetoothctl devices Connected
+    
+    echo -e "\n=== Audio Profiles ==="
+    bluetoothctl menu audio
+    bluetoothctl show
     
     echo -e "\n=== Audio Devices ==="
     sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$(id -u $REAL_USER) pw-cli list-objects | grep -A 2 "bluetooth"
