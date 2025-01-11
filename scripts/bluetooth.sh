@@ -52,16 +52,22 @@ EOF
     usermod -a -G bluetooth $REAL_USER
     usermod -a -G audio $REAL_USER
     
-    # Stop services
+    # Stop all services and sockets
     systemctl stop bluetooth
-    sudo -u $REAL_USER DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user stop pipewire pipewire-pulse
+    sudo -u $REAL_USER DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user stop pipewire.socket pipewire-pulse.socket pipewire.service pipewire-pulse.service
     sleep 2
     
     # Start services in correct order
-    sudo -u $REAL_USER DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user start pipewire
+    sudo -u $REAL_USER DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user start pipewire.socket
     sleep 1
-    sudo -u $REAL_USER DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user start pipewire-pulse
+    sudo -u $REAL_USER DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user start pipewire-pulse.socket
+    sleep 1
+    sudo -u $REAL_USER DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user start pipewire.service
+    sleep 1
+    sudo -u $REAL_USER DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user start pipewire-pulse.service
     sleep 2
+    
+    # Start Bluetooth after PipeWire is ready
     systemctl start bluetooth
     sleep 2
     
@@ -71,6 +77,13 @@ EOF
     hciconfig hci0 class 0x6c0404
     hciconfig hci0 up
     sleep 1
+    
+    # Verify PipeWire is running
+    if ! sudo -u $REAL_USER DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" pactl info >/dev/null 2>&1; then
+        echo "Warning: PipeWire is not responding. Trying to restart..."
+        sudo -u $REAL_USER DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user restart pipewire pipewire-pulse
+        sleep 2
+    fi
     
     echo "Audio system configured"
 }
@@ -85,25 +98,17 @@ enable_pairing() {
     echo "Initializing Bluetooth..."
     
     # Reset Bluetooth controller
-    echo -e "power off\nquit" | bluetoothctl
+    bluetoothctl power off
+    sleep 2
+    bluetoothctl power on
     sleep 2
     
-    # Configure Bluetooth with proper agent handling
-    expect << EOF
-spawn bluetoothctl
-expect "\[bluetooth\]"
-send "power on\r"
-expect "\[bluetooth\]"
-send "agent on\r"
-expect "\[bluetooth\]"
-send "default-agent\r"
-expect "\[bluetooth\]"
-send "discoverable on\r"
-expect "\[bluetooth\]"
-send "pairable on\r"
-expect "\[bluetooth\]"
-send "quit\r"
-expect eof
+    # Configure Bluetooth
+    bluetoothctl << EOF
+agent on
+default-agent
+discoverable on
+pairable on
 EOF
     
     # Verify settings
@@ -134,19 +139,20 @@ get_status() {
     
     echo "=== System Services Status ==="
     systemctl status bluetooth --no-pager
-    sudo -u $REAL_USER DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user status pipewire pipewire-pulse --no-pager
+    sudo -u $REAL_USER DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user status pipewire.socket pipewire-pulse.socket pipewire.service pipewire-pulse.service --no-pager
     
     echo -e "\n=== Bluetooth Controller ==="
     bluetoothctl show | grep -E "Name|Powered|Discoverable|Pairable|Alias|UUID|Class"
     
     echo -e "\n=== Connected Devices ==="
     bluetoothctl devices Connected
+    bluetoothctl info BC:D0:74:A3:4D:09
     
     echo -e "\n=== Audio Devices ==="
-    sudo -u $REAL_USER pw-cli list-objects | grep -A 2 "bluetooth"
+    sudo -u $REAL_USER DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" pw-cli list-objects | grep -A 2 "bluetooth"
     
     echo -e "\n=== PipeWire Audio Sinks ==="
-    sudo -u $REAL_USER pactl list sinks short
+    sudo -u $REAL_USER DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" pactl list sinks short
     
     echo -e "\n=== Bluetooth Audio Status ==="
     hcitool dev
