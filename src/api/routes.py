@@ -56,7 +56,9 @@ class BluetoothAgent(dbus.service.Object):
 
     @dbus.service.method("org.bluez.Agent1", in_signature="ouq", out_signature="")
     def RequestConfirmation(self, device, passkey, entered):
-        logger.info(f"Confirming passkey {passkey} for device {device}")
+        logger.info(f"Auto-confirming passkey {passkey} for device {device}")
+        # Automatically confirm the passkey
+        subprocess.run(["bluetoothctl", "confirm", str(passkey)], check=True)
         return
 
     @dbus.service.method("org.bluez.Agent1", in_signature="o", out_signature="s")
