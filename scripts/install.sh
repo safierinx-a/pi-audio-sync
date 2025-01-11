@@ -124,9 +124,10 @@ pulseaudio --system --daemonize
 
 # Copy and enable systemd service
 echo "Setting up systemd service..."
-cp ${INSTALL_DIR}/scripts/audio-sync.service /etc/systemd/system/
+SERVICE_NAME="audio-sync@${SUDO_USER}.service"
+cp ${INSTALL_DIR}/scripts/audio-sync.service "/etc/systemd/system/${SERVICE_NAME}"
 systemctl daemon-reload
-systemctl enable audio-sync@${SUDO_USER}.service
+systemctl enable "${SERVICE_NAME}"
 
 # Create environment file if it doesn't exist
 if [ ! -f "${INSTALL_DIR}/.env" ]; then
