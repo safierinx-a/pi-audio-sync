@@ -56,17 +56,20 @@ class BluetoothAgent(dbus.service.Object):
             # Get the device object
             device_obj = self.bus.get_object("org.bluez", device)
             device_iface = dbus.Interface(device_obj, "org.bluez.Device1")
-
-            # Trust and pair the device
             props = dbus.Interface(device_obj, "org.freedesktop.DBus.Properties")
+
+            # Trust the device
             props.Set("org.bluez.Device1", "Trusted", dbus.Boolean(True))
 
-            # Send positive confirmation
-            device_iface.Connect()
-            logger.info(f"Successfully confirmed and connected device {device}")
+            # Get the agent manager to confirm the passkey
+            obj = self.bus.get_object("org.bluez", "/org/bluez")
+            agent_manager = dbus.Interface(obj, "org.bluez.AgentManager1")
+            agent_manager.SendConfirmation(device, dbus.UInt32(passkey))
+
+            logger.info(f"Successfully confirmed passkey {passkey} for device {device}")
             return
         except Exception as e:
-            logger.error(f"Error confirming device: {e}")
+            logger.error(f"Error confirming passkey: {e}")
             raise
 
     @dbus.service.method("org.bluez.Agent1", in_signature="o", out_signature="u")
