@@ -1,12 +1,14 @@
 [Unit]
 Description=Pi Audio Sync Service
-After=network.target pulseaudio.service
-Wants=pulseaudio.service
+After=network.target pulseaudio.service bluetooth.service
+Wants=pulseaudio.service bluetooth.service
 
 [Service]
 Type=simple
 User=%i
 Group=%i
+# Add user to bluetooth group
+ExecStartPre=/usr/bin/sudo /usr/sbin/usermod -a -G bluetooth %i
 WorkingDirectory=/opt/pi-audio-sync
 Environment=PYTHONPATH=/opt/pi-audio-sync
 EnvironmentFile=/opt/pi-audio-sync/.env

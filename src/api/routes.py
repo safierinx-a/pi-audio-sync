@@ -2,6 +2,8 @@
 API routes for Pi Audio Sync
 """
 
+import os
+import subprocess
 from fastapi import APIRouter, HTTPException, Depends
 from loguru import logger
 
@@ -114,3 +116,54 @@ async def get_hass_states(manager: AudioManager = Depends(get_audio_manager)):
     except Exception as e:
         logger.error(f"Error getting Home Assistant states: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/bluetooth/pairing")
+async def enable_pairing_mode(duration: int = 60):
+    """Enable Bluetooth pairing mode for specified duration (seconds)"""
+    try:
+        # Make Bluetooth discoverable
+        subprocess.run(["sudo", "bluetoothctl", "discoverable", "on"], check=True)
+        subprocess.run(["sudo", "bluetoothctl", "pairable", "on"], check=True)
+
+        # Set friendly name
+        subprocess.run(
+            ["sudo", "bluetoothctl", "system-alias", "Pi Audio Sync"], check=True
+        )
+
+        # Set timeout (if supported)
+        subprocess.run(
+            ["sudo", "bluetoothctl", "discoverable-timeout", str(duration)], check=True
+        )
+
+        logger.info(f"Bluetooth pairing mode enabled for {duration} seconds")
+        return {"status": "enabled", "duration": duration}
+    except Exception as e:
+        logger.error(f"Failed to enable pairing mode: {e}")
+        raise HTTPException(status_code=500, detail="Failed to enable pairing mode")
+
+
+@router.get("/bluetooth/status")
+async def get_bluetooth_status():
+    """Get Bluetooth status"""
+    try:
+        # Get discoverable status
+        result = subprocess.run(
+            ["bluetoothctl", "show"], capture_output=True, text=True, check=True
+        )
+
+        # Parse output
+        lines = result.stdout.split("\n")
+        status = {
+            "discoverable": any("Discoverable: yes" in line for line in lines),
+            "powered": any("Powered: yes" in line for line in lines),
+            "name": next(
+                (line.split(": ")[1] for line in lines if "Alias: " in line),
+                "Pi Audio Sync",
+            ),
+        }
+
+        return status
+    except Exception as e:
+        logger.error(f"Failed to get Bluetooth status: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get Bluetooth status")

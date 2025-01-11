@@ -142,6 +142,9 @@ if [ ! -f "${INSTALL_DIR}/.env" ]; then
     chown ${SUDO_USER}:${SUDO_USER} ${INSTALL_DIR}/.env
 fi
 
+# Add sudoers rule for bluetoothctl
+echo "%bluetooth ALL=(ALL) NOPASSWD: /usr/bin/bluetoothctl" | sudo tee /etc/sudoers.d/020_bluetooth-nopasswd
+
 echo "Installation complete!"
 echo "Please edit ${INSTALL_DIR}/.env to configure your settings"
 echo "Then start the service with: sudo systemctl start audio-sync@${SUDO_USER}" 
