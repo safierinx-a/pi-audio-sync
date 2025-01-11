@@ -56,6 +56,10 @@ apt-get install -y \
     python3-dbus \
     python3-gi \
     pulseaudio \
+    pulseaudio-module-bluetooth \
+    pulseaudio-utils \
+    bluez \
+    bluez-tools \
     alsa-utils \
     libasound2-dev \
     portaudio19-dev \

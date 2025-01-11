@@ -198,11 +198,20 @@ async def enable_pairing_mode(duration: int = 60):
         adapter = get_adapter()
         props = dbus.Interface(adapter, "org.freedesktop.DBus.Properties")
 
+        # Make sure adapter is powered on
+        props.Set("org.bluez.Adapter1", "Powered", dbus.Boolean(True))
+
         # Configure adapter properties
         props.Set("org.bluez.Adapter1", "Discoverable", dbus.Boolean(True))
         props.Set("org.bluez.Adapter1", "Pairable", dbus.Boolean(True))
         props.Set("org.bluez.Adapter1", "DiscoverableTimeout", dbus.UInt32(duration))
         props.Set("org.bluez.Adapter1", "Alias", dbus.String("Pi Audio Sync"))
+
+        # Make sure PulseAudio Bluetooth modules are loaded
+        subprocess.run(["pactl", "load-module", "module-bluetooth-policy"], check=False)
+        subprocess.run(
+            ["pactl", "load-module", "module-bluetooth-discover"], check=False
+        )
 
         logger.info(f"Bluetooth pairing mode enabled for {duration} seconds")
         return {"status": "enabled", "duration": duration}
