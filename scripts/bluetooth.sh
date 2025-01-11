@@ -13,20 +13,40 @@ enable_pairing() {
     sudo bluetoothctl pairable on
     sudo bluetoothctl discoverable-timeout $duration
     
-    # Start bluetoothctl in the background to auto-confirm passkeys
-    (sudo bluetoothctl << EOF
-    agent on
-    default-agent
-    yes
-    EOF
+    # Enable necessary profiles
+    sudo bluetoothctl discoverable-timeout $duration
+    
+    # Start bluetoothctl in the background with enhanced pairing support
+    (sudo bluetoothctl << 'EOF'
+agent on
+default-agent
+power on
+# Auto-accept pairing requests
+yes
+# Default PIN if needed (0000 is common)
+0000
+EOF
     ) &
     
+    # Enable A2DP sink profile for audio
+    sudo bluetoothctl << 'EOF'
+menu audio
+discoverable on
+pairable on
+EOF
+    
     echo "Pairing mode enabled for $duration seconds"
+    echo "Device is ready for pairing with PIN: 0000 if requested"
 }
 
 # Function to get Bluetooth status
 get_status() {
+    echo "=== Bluetooth Status ==="
     sudo bluetoothctl show | grep -E "Name|Powered|Discoverable|Pairable|Alias"
+    echo -e "\n=== Connected Devices ==="
+    sudo bluetoothctl devices Connected
+    echo -e "\n=== Available Profiles ==="
+    sudo bluetoothctl list
 }
 
 # Handle command line arguments
@@ -39,6 +59,8 @@ case "$1" in
         ;;
     *)
         echo "Usage: $0 {enable [duration]|status}"
+        echo "  enable [duration]: Enable pairing mode (default 60 seconds)"
+        echo "  status: Show current Bluetooth status and connections"
         exit 1
         ;;
 esac 
