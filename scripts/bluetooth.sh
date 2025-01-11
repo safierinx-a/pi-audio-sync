@@ -10,13 +10,44 @@ fi
 ensure_pulseaudio() {
     echo "Configuring PulseAudio..."
     
-    # Stop any existing PulseAudio
+    # Stop any existing PulseAudio and disable user service
+    systemctl --global disable pulseaudio.service pulseaudio.socket || true
     pkill -9 pulseaudio || true
     sleep 2
     
-    # Create/update PulseAudio system config
-    mkdir -p /etc/pulse/system.pa.d
-    cat > /etc/pulse/system.pa.d/bluetooth.pa << EOF
+    # Create system service file for PulseAudio
+    cat > /etc/systemd/system/pulseaudio.service << EOF
+[Unit]
+Description=PulseAudio Sound System
+After=network.target
+
+[Install]
+WantedBy=multi-user.target
+
+[Service]
+Type=simple
+PrivateTmp=true
+ExecStart=/usr/bin/pulseaudio --system --realtime --disallow-exit --no-cpu-limit
+Restart=always
+RestartSec=30
+EOF
+
+    # Create required directories with proper permissions
+    mkdir -p /var/run/pulse
+    mkdir -p /var/lib/pulse
+    chown -R pulse:pulse /var/run/pulse
+    chown -R pulse:pulse /var/lib/pulse
+    
+    # Configure system-wide PulseAudio
+    cat > /etc/pulse/system.pa << EOF
+#!/usr/bin/pulseaudio -nF
+.fail
+
+### Load several protocols
+load-module module-native-protocol-unix auth-cookie-enabled=0 auth-anonymous=1
+load-module module-native-protocol-tcp auth-ip-acl=127.0.0.1;192.168.0.0/16;172.16.0.0/12;10.0.0.0/8
+
+### Bluetooth support
 .ifexists module-bluetooth-policy.so
 load-module module-bluetooth-policy
 .endif
@@ -25,31 +56,45 @@ load-module module-bluetooth-policy
 load-module module-bluetooth-discover
 .endif
 
-.ifexists module-switch-on-connect.so
+### Should be after module-*-discover
 load-module module-switch-on-connect
-.endif
+
+### Hardware
+load-module module-udev-detect
+load-module module-alsa-card
+
+### Allow pulse access through local system
+load-module module-native-protocol-unix auth-cookie-enabled=0 auth-anonymous=1 socket=/var/run/pulse/native
+
+### Enable positioned event sounds
+load-module module-position-event-sounds
 EOF
+
+    chmod 644 /etc/pulse/system.pa
     
-    # Ensure system-wide PulseAudio config exists
+    # Configure client settings
     cat > /etc/pulse/client.conf << EOF
-default-server = /var/run/pulse/native
+default-server = unix:/var/run/pulse/native
 autospawn = no
 daemon-binary = /bin/true
 enable-shm = yes
 EOF
+
+    chmod 644 /etc/pulse/client.conf
     
     # Set permissions
-    chown -R pulse:pulse /var/run/pulse
     usermod -a -G pulse-access $SUDO_USER
     usermod -a -G audio $SUDO_USER
     usermod -a -G bluetooth pulse
     usermod -a -G bluetooth $SUDO_USER
     
-    # Start PulseAudio in system mode
-    pulseaudio --system --daemonize
+    # Restart and enable the service
+    systemctl daemon-reload
+    systemctl enable pulseaudio.service
+    systemctl restart pulseaudio.service
     sleep 2
     
-    echo "PulseAudio configured and started"
+    echo "PulseAudio configured and started as system service"
 }
 
 # Function to enable pairing mode
