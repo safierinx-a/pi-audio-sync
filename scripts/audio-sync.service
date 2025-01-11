@@ -5,8 +5,8 @@ Wants=pulseaudio.service
 
 [Service]
 Type=simple
-User=pi
-Group=pi
+User=%i
+Group=%i
 WorkingDirectory=/opt/pi-audio-sync
 Environment=PYTHONPATH=/opt/pi-audio-sync
 EnvironmentFile=/opt/pi-audio-sync/.env

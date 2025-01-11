@@ -7,6 +7,13 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
+# Get the user who invoked sudo
+SUDO_USER="${SUDO_USER:-$USER}"
+if [ "$SUDO_USER" = "root" ]; then
+    echo "Please run with sudo instead of as root directly"
+    exit 1
+fi
+
 # Install system dependencies
 echo "Installing system dependencies..."
 apt-get update
@@ -30,12 +37,12 @@ cp -r . ${INSTALL_DIR}/
 
 # Set ownership
 echo "Setting permissions..."
-chown -R pi:pi ${INSTALL_DIR}
+chown -R ${SUDO_USER}:${SUDO_USER} ${INSTALL_DIR}
 
 # Create virtual environment
 echo "Creating Python virtual environment..."
-su - pi -c "cd ${INSTALL_DIR} && python3 -m venv venv"
-su - pi -c "cd ${INSTALL_DIR} && ./venv/bin/pip install -r requirements.txt"
+su - ${SUDO_USER} -c "cd ${INSTALL_DIR} && python3 -m venv venv"
+su - ${SUDO_USER} -c "cd ${INSTALL_DIR} && ./venv/bin/pip install -r requirements.txt"
 
 # Configure PulseAudio
 echo "Configuring PulseAudio..."
@@ -53,7 +60,7 @@ systemctl enable audio-sync.service
 if [ ! -f "${INSTALL_DIR}/.env" ]; then
     echo "Creating environment file..."
     cp ${INSTALL_DIR}/.env.example ${INSTALL_DIR}/.env
-    chown pi:pi ${INSTALL_DIR}/.env
+    chown ${SUDO_USER}:${SUDO_USER} ${INSTALL_DIR}/.env
 fi
 
 echo "Installation complete!"
