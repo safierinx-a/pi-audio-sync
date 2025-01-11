@@ -1,0 +1,20 @@
+[Unit]
+Description=Pi Audio Sync Service
+After=network.target pulseaudio.service
+Wants=pulseaudio.service
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/opt/pi-audio-sync
+Environment=PYTHONPATH=/opt/pi-audio-sync
+EnvironmentFile=/opt/pi-audio-sync/.env
+ExecStart=/opt/pi-audio-sync/venv/bin/python -m src.main
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target 
