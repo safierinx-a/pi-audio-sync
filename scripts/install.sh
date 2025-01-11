@@ -14,6 +14,39 @@ if [ "$SUDO_USER" = "root" ]; then
     exit 1
 fi
 
+# System diagnostics
+echo "=== System Audio Diagnostics ==="
+echo "Checking audio devices..."
+aplay -l || echo "No ALSA devices found"
+echo
+
+echo "Checking PulseAudio installation..."
+which pulseaudio || echo "PulseAudio not found"
+pulseaudio --version || echo "Cannot get PulseAudio version"
+echo
+
+echo "Checking PulseAudio status..."
+ps aux | grep pulseaudio || echo "No PulseAudio processes found"
+echo
+
+echo "Checking audio groups..."
+getent group audio
+getent group pulse
+getent group pulse-access
+echo
+
+echo "Checking PulseAudio configuration directories..."
+ls -la /etc/pulse/ || echo "No system PulseAudio config found"
+ls -la /home/${SUDO_USER}/.config/pulse/ || echo "No user PulseAudio config found"
+echo
+
+read -p "Continue with installation? (y/n) " -n 1 -r
+echo
+if [[ ! $REPLY =~ ^[Yy]$ ]]
+then
+    exit 1
+fi
+
 # Install system dependencies
 echo "Installing system dependencies..."
 apt-get update
@@ -46,13 +79,28 @@ su - ${SUDO_USER} -c "cd ${INSTALL_DIR} && ./venv/bin/pip install -r requirement
 
 # Configure PulseAudio
 echo "Configuring PulseAudio..."
+# System-wide configuration
 cp ${INSTALL_DIR}/config/pulse/default.pa /etc/pulse/default.pa
 cp ${INSTALL_DIR}/config/pulse/daemon.conf /etc/pulse/daemon.conf
+
+# User-specific configuration
+USER_PULSE_DIR="/home/${SUDO_USER}/.config/pulse"
+echo "Setting up user PulseAudio directory at ${USER_PULSE_DIR}..."
+mkdir -p ${USER_PULSE_DIR}
+cp ${INSTALL_DIR}/config/pulse/default.pa ${USER_PULSE_DIR}/
+cp ${INSTALL_DIR}/config/pulse/daemon.conf ${USER_PULSE_DIR}/
+chown -R ${SUDO_USER}:${SUDO_USER} ${USER_PULSE_DIR}
+
+# Make sure PulseAudio can start for the user
+usermod -a -G audio ${SUDO_USER}
+usermod -a -G pulse ${SUDO_USER}
+usermod -a -G pulse-access ${SUDO_USER}
 
 # Restart PulseAudio for the user
 echo "Restarting PulseAudio..."
 su - ${SUDO_USER} -c "pulseaudio -k || true"  # Kill existing PulseAudio
-su - ${SUDO_USER} -c "pulseaudio --start"     # Start PulseAudio
+sleep 2  # Give it time to fully stop
+su - ${SUDO_USER} -c "pulseaudio --start -D"  # Start PulseAudio as daemon
 
 # Copy and enable systemd service
 echo "Setting up systemd service..."
