@@ -53,11 +53,17 @@ apt-get update
 apt-get install -y \
     python3-pip \
     python3-venv \
+    python3-dbus \
+    python3-gi \
     pulseaudio \
     alsa-utils \
     libasound2-dev \
     portaudio19-dev \
-    python3-dev
+    python3-dev \
+    libdbus-1-dev \
+    libdbus-glib-1-dev \
+    libgirepository1.0-dev \
+    gir1.2-gtk-3.0
 
 # Create installation directory
 INSTALL_DIR="/opt/pi-audio-sync"
