@@ -4,49 +4,55 @@
 enable_pairing() {
     local duration=$1
     
-    # Power on and set friendly name
+    echo "Initializing Bluetooth..."
+    
+    # Restart bluetooth service to ensure clean state
+    sudo systemctl restart bluetooth
+    sleep 2
+    
+    # Kill any existing bluetoothctl sessions
+    sudo pkill -f bluetoothctl
+    
+    # Reset bluetooth controller
+    sudo bluetoothctl power off
+    sleep 1
     sudo bluetoothctl power on
-    sudo bluetoothctl set-alias "Pi Audio Sync"
-    
-    # Make discoverable and pairable
-    sudo bluetoothctl discoverable on
-    sudo bluetoothctl pairable on
-    sudo bluetoothctl discoverable-timeout $duration
-    
-    # Start bluetoothctl agent in the background
-    (
-        sudo bluetoothctl << 'EOF'
-agent on
-default-agent
-power on
-discoverable on
-pairable on
-EOF
-    ) &
-
-    # Wait for agent to initialize
     sleep 1
     
-    # Configure audio profile
-    sudo bluetoothctl << 'EOF'
-menu audio
-discoverable on
-pairable on
-quit
-EOF
+    echo "Configuring Bluetooth..."
     
-    echo "Pairing mode enabled for $duration seconds"
-    echo "Device is ready for pairing"
+    # Basic setup
+    sudo bluetoothctl set-alias "Pi Audio Sync"
+    sudo bluetoothctl discoverable-timeout $duration
+    sudo bluetoothctl pairable on
+    sudo bluetoothctl discoverable on
+    
+    # Ensure audio profiles are loaded
+    sudo pactl load-module module-bluetooth-policy
+    sudo pactl load-module module-bluetooth-discover
+    
+    # Start agent with auto-accept
+    sudo bluetoothctl agent on
+    sudo bluetoothctl default-agent
+    
+    echo "Bluetooth is ready for pairing"
+    echo "Pairing will be available for $duration seconds"
+    echo "Waiting for connections..."
 }
 
 # Function to get Bluetooth status
 get_status() {
-    echo "=== Bluetooth Status ==="
+    echo "=== System Status ==="
+    systemctl status bluetooth --no-pager
+    
+    echo -e "\n=== Bluetooth Controller ==="
     sudo bluetoothctl show | grep -E "Name|Powered|Discoverable|Pairable|Alias"
+    
     echo -e "\n=== Connected Devices ==="
     sudo bluetoothctl devices Connected
-    echo -e "\n=== Available Profiles ==="
-    sudo bluetoothctl list
+    
+    echo -e "\n=== Audio Devices ==="
+    sudo pactl list cards | grep -A 2 "bluez"
 }
 
 # Handle command line arguments
