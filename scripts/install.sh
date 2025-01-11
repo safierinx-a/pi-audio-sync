@@ -79,6 +79,12 @@ su - ${SUDO_USER} -c "cd ${INSTALL_DIR} && ./venv/bin/pip install -r requirement
 
 # Configure PulseAudio
 echo "Configuring PulseAudio..."
+
+# Backup existing configs
+echo "Backing up existing PulseAudio configs..."
+[ -f /etc/pulse/daemon.conf ] && mv /etc/pulse/daemon.conf /etc/pulse/daemon.conf.bak
+[ -f /etc/pulse/default.pa ] && mv /etc/pulse/default.pa /etc/pulse/default.pa.bak
+
 # System-wide configuration
 cp ${INSTALL_DIR}/config/pulse/default.pa /etc/pulse/default.pa
 cp ${INSTALL_DIR}/config/pulse/daemon.conf /etc/pulse/daemon.conf
@@ -87,6 +93,17 @@ cp ${INSTALL_DIR}/config/pulse/daemon.conf /etc/pulse/daemon.conf
 USER_PULSE_DIR="/home/${SUDO_USER}/.config/pulse"
 echo "Setting up user PulseAudio directory at ${USER_PULSE_DIR}..."
 mkdir -p ${USER_PULSE_DIR}
+
+# Preserve the cookie file if it exists
+[ -f "${USER_PULSE_DIR}/cookie" ] && cp "${USER_PULSE_DIR}/cookie" /tmp/pulse-cookie
+
+# Clean user config directory
+rm -rf ${USER_PULSE_DIR}/*
+mkdir -p ${USER_PULSE_DIR}
+
+# Restore cookie if it existed
+[ -f /tmp/pulse-cookie ] && mv /tmp/pulse-cookie "${USER_PULSE_DIR}/cookie"
+
 cp ${INSTALL_DIR}/config/pulse/default.pa ${USER_PULSE_DIR}/
 cp ${INSTALL_DIR}/config/pulse/daemon.conf ${USER_PULSE_DIR}/
 chown -R ${SUDO_USER}:${SUDO_USER} ${USER_PULSE_DIR}
@@ -96,11 +113,14 @@ usermod -a -G audio ${SUDO_USER}
 usermod -a -G pulse ${SUDO_USER}
 usermod -a -G pulse-access ${SUDO_USER}
 
-# Restart PulseAudio for the user
-echo "Restarting PulseAudio..."
-su - ${SUDO_USER} -c "pulseaudio -k || true"  # Kill existing PulseAudio
-sleep 2  # Give it time to fully stop
-su - ${SUDO_USER} -c "pulseaudio --start -D"  # Start PulseAudio as daemon
+# Stop any running PulseAudio instances
+echo "Stopping PulseAudio..."
+killall pulseaudio || true
+sleep 2
+
+# Start PulseAudio system-wide
+echo "Starting PulseAudio system-wide..."
+pulseaudio --system --daemonize
 
 # Copy and enable systemd service
 echo "Setting up systemd service..."
