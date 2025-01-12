@@ -4,7 +4,7 @@ python-dotenv==1.0.0
 pydantic==2.5.2
 loguru==0.7.2
 aiohttp==3.9.1
-pulsectl==23.5.2
+libpipewire==0.3.79
 sounddevice==0.4.6
 numpy==1.26.2
 python-multipart==0.0.6

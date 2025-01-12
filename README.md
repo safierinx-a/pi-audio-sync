@@ -19,13 +19,13 @@ A Raspberry Pi-based audio synchronization system that manages multiple audio ou
   - Built-in audio
   - USB Sound Cards/DACs
   - HDMI audio
-  - Any PulseAudio-compatible output
+  - Any PipeWire-compatible output
 
 ### Software
 
 - Raspberry Pi OS (64-bit recommended)
 - Python 3.9+
-- PulseAudio
+- PipeWire
 - ALSA utils
 
 ## Installation
@@ -74,14 +74,14 @@ A Raspberry Pi-based audio synchronization system that manages multiple audio ou
 
 ### Audio Quality Settings
 
-PulseAudio is configured for optimal quality:
+PipeWire is configured for optimal quality:
 
 - Sample Rate: 48kHz
 - Format: 32-bit float
 - Resampling: SOX-HQ
 - Buffer Size: Optimized for Raspberry Pi 3B
 
-You can adjust these in `config/pulse/daemon.conf`.
+You can adjust these in `config/pipewire/pipewire.conf`.
 
 ## Home Assistant Integration
 
@@ -115,12 +115,6 @@ pytest tests/
 ```bash
 # Start the service
 sudo systemctl start audio-sync
-
-# Stop the service
-sudo systemctl stop audio-sync
-
-# View logs
-journalctl -u audio-sync -f
 ```
 
 ## Architecture
