@@ -30,6 +30,7 @@ FastConnectable = true
 Privacy = off
 JustWorksRepairing = always
 MultiProfile = multiple
+Experimental = true
 
 [Policy]
 AutoEnable=true
@@ -38,6 +39,9 @@ ReconnectIntervals=1,2,4,8,16,32,64
 
 [GATT]
 Cache = always
+
+[Policy]
+AutoEnable=true
 EOF
 
     # Configure PipeWire environment
@@ -52,7 +56,10 @@ EOF
  "bluez5.hfphsp-backend": "native",
  "bluez5.msbc-support": true,
  "bluez5.msbc-force-mtu": 0,
- "bluez5.keep-profile": true
+ "bluez5.keep-profile": true,
+ "bluez5.a2dp.ldac.quality": "auto",
+ "bluez5.a2dp.aac.bitratemode": "0",
+ "bluez5.a2dp.aac.quality": "1"
 }
 EOF
     chown -R $REAL_USER:$REAL_USER /home/$REAL_USER/.config/pipewire
@@ -84,20 +91,30 @@ EOF
     sleep 2
     
     # Set Bluetooth class manually and reset controller
-    hciconfig hci0 down
-    sleep 1
-    hciconfig hci0 class 0x6c0404
-    hciconfig hci0 reset
-    sleep 1
-    hciconfig hci0 up
-    sleep 2
-    
-    # Verify PipeWire is running
-    if ! sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$USER_ID DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" pactl info >/dev/null 2>&1; then
-        echo "Warning: PipeWire is not responding. Trying to restart..."
-        sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$USER_ID DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user restart pipewire pipewire-pulse
+    for i in {1..3}; do
+        echo "Attempt $i: Configuring Bluetooth controller..."
+        hciconfig hci0 down
         sleep 2
-    fi
+        hciconfig hci0 reset
+        sleep 2
+        hciconfig hci0 up
+        sleep 2
+        if hciconfig hci0 class 0x6c0404; then
+            break
+        fi
+        echo "Retrying controller configuration..."
+        sleep 2
+    done
+    
+    # Verify PipeWire is running with retries
+    for i in {1..3}; do
+        if sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$USER_ID DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" pactl info >/dev/null 2>&1; then
+            break
+        fi
+        echo "Attempt $i: PipeWire not responding. Restarting..."
+        sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$USER_ID DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user restart pipewire pipewire-pulse
+        sleep 3
+    done
     
     echo "Audio system configured"
 }
@@ -111,18 +128,33 @@ enable_pairing() {
     
     echo "Initializing Bluetooth..."
     
-    # Reset Bluetooth controller
+    # Reset Bluetooth controller and agent
     bluetoothctl power off
     sleep 2
     bluetoothctl power on
     sleep 2
     
-    # Configure Bluetooth with proper agent handling
+    # Remove existing agent if any
+    bluetoothctl agent off
+    sleep 1
+    
+    # Configure Bluetooth with proper agent handling and retries
+    for i in {1..3}; do
+        echo "Attempt $i: Configuring Bluetooth agent..."
+        
+        # Try to register agent
+        if bluetoothctl agent on && bluetoothctl default-agent; then
+            echo "Agent registered successfully"
+            break
+        fi
+        
+        echo "Agent registration failed. Retrying..."
+        bluetoothctl agent off
+        sleep 2
+    done
+    
+    # Configure discoverable and pairable modes
     bluetoothctl << EOF
-remove BC:D0:74:A3:4D:09
-power on
-agent on
-default-agent
 discoverable on
 pairable on
 EOF
