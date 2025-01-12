@@ -1,7 +1,7 @@
 [Unit]
 Description=Pi Audio Sync Service
-After=network.target pulseaudio.service bluetooth.service
-Wants=pulseaudio.service bluetooth.service
+After=network.target pipewire.service bluetooth.service
+Wants=pipewire.service bluetooth.service
 
 [Service]
 Type=simple

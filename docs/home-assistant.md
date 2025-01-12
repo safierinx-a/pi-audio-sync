@@ -74,7 +74,7 @@ automation:
 
 ## Troubleshooting
 
-1. **No Devices Showing**:
+1. **No Audio Output**:
 
    - Check if Pi Audio Sync service is running
    - Verify network connectivity
@@ -82,12 +82,12 @@ automation:
 
 2. **Volume Control Not Working**:
 
-   - Ensure proper permissions for PulseAudio
+   - Ensure proper permissions for PipeWire
    - Check API endpoints are accessible
 
 3. **Devices Show as Unavailable**:
    - Check physical connections
-   - Verify PulseAudio service is running
+   - Verify PipeWire service is running
    - Check system logs for errors
 
 ## API Endpoints

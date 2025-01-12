@@ -62,11 +62,11 @@ EOF
     chown -R $REAL_USER:$REAL_USER /home/$REAL_USER/.config/pipewire
 
     # Add user to required groups
-    usermod -a -G bluetooth,audio,pulse,pulse-access $REAL_USER
+    usermod -a -G bluetooth,audio $REAL_USER
     
     # Stop all services first
     systemctl stop bluetooth
-    sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$USER_ID DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user stop pipewire.socket pipewire-pulse.socket pipewire.service pipewire-pulse.service
+    sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$USER_ID DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user stop pipewire.socket pipewire.service
     sleep 2
     
     # Kill any existing processes
@@ -105,21 +105,17 @@ EOF
     echo "Starting PipeWire services..."
     sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$USER_ID DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user start pipewire.socket
     sleep 2
-    sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$USER_ID DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user start pipewire-pulse.socket
-    sleep 2
     sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$USER_ID DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user start pipewire.service
-    sleep 2
-    sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$USER_ID DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user start pipewire-pulse.service
     sleep 2
     
     # Verify PipeWire is running
     for i in {1..3}; do
-        if sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$USER_ID DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" pactl info >/dev/null 2>&1; then
+        if sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$USER_ID DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" pw-cli info >/dev/null 2>&1; then
             echo "PipeWire is running"
             break
         fi
         echo "Attempt $i: PipeWire not responding. Restarting..."
-        sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$USER_ID DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user restart pipewire pipewire-pulse
+        sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$USER_ID DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user restart pipewire
         sleep 3
     done
     
@@ -216,7 +212,7 @@ get_status() {
     
     echo "=== System Services Status ==="
     systemctl status bluetooth --no-pager
-    sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$USER_ID DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user status pipewire.socket pipewire-pulse.socket pipewire.service pipewire-pulse.service --no-pager
+    sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$USER_ID DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user status pipewire.socket pipewire.service --no-pager
     
     echo -e "\n=== Bluetooth Controller ==="
     bluetoothctl show | grep -E "Name|Powered|Discoverable|Pairable|Alias|UUID|Class"
@@ -228,8 +224,8 @@ get_status() {
     echo -e "\n=== Audio Devices ==="
     sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$USER_ID DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" pw-cli list-objects | grep -A 2 "bluetooth"
     
-    echo -e "\n=== PipeWire Audio Sinks ==="
-    sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$USER_ID DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" pactl list sinks short
+    echo -e "\n=== PipeWire Audio Nodes ==="
+    sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$USER_ID DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" pw-cli list-objects | grep -A 2 "node.name"
     
     echo -e "\n=== Bluetooth Audio Status ==="
     hcitool dev
@@ -243,7 +239,6 @@ get_status() {
     echo "User ID: $USER_ID"
     echo "Real User: $REAL_USER"
     echo "User Groups: $(groups $REAL_USER)"
-    ls -la $XDG_RUNTIME_DIR/pulse || true
     echo "PipeWire Config:"
     ls -la /home/$REAL_USER/.config/pipewire/ || true
 }

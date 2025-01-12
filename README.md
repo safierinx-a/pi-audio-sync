@@ -123,9 +123,9 @@ The system consists of three main components:
 
 ### 1. Audio Manager
 
-- Manages PulseAudio devices and sinks
+- Manages PipeWire nodes and sinks
 - Handles device hotplugging
-- Creates and maintains combined sink
+- Creates and maintains synchronized audio outputs
 - Provides error recovery
 
 ### 2. FastAPI Server
@@ -154,8 +154,8 @@ The system consists of three main components:
 
 2. **Audio Sync Issues**
 
-   - Verify PulseAudio config
-   - Check combined sink status
+   - Verify PipeWire config
+   - Check audio node status
    - Adjust buffer settings if needed
 
 3. **Home Assistant Connection**
@@ -166,7 +166,7 @@ The system consists of three main components:
 ### Logs
 
 - Service logs: `journalctl -u audio-sync -f`
-- PulseAudio logs: `journalctl -u pulseaudio -f`
+- PipeWire logs: `journalctl --user -u pipewire -f`
 - API logs: `/var/log/pi-audio-sync/api.log`
 
 ## License
