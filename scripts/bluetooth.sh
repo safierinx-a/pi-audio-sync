@@ -39,9 +39,6 @@ ReconnectIntervals=1,2,4,8,16,32,64
 
 [GATT]
 Cache = always
-
-[Policy]
-AutoEnable=true
 EOF
 
     # Configure PipeWire environment
@@ -67,30 +64,21 @@ EOF
     # Add user to required groups
     usermod -a -G bluetooth,audio,pulse,pulse-access $REAL_USER
     
-    # Kill any existing bluetoothd process
-    pkill -f bluetoothd || true
-    sleep 1
-    
-    # Stop all services and sockets
+    # Stop all services first
     systemctl stop bluetooth
     sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$USER_ID DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user stop pipewire.socket pipewire-pulse.socket pipewire.service pipewire-pulse.service
     sleep 2
     
-    # Start services in correct order
-    sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$USER_ID DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user start pipewire.socket
-    sleep 1
-    sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$USER_ID DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user start pipewire-pulse.socket
-    sleep 1
-    sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$USER_ID DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user start pipewire.service
-    sleep 1
-    sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$USER_ID DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user start pipewire-pulse.service
+    # Kill any existing processes
+    pkill -f bluetoothd || true
+    sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$USER_ID DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" pkill -f pipewire || true
     sleep 2
     
-    # Start Bluetooth after PipeWire is ready
+    # Initialize Bluetooth first
     systemctl start bluetooth
     sleep 2
     
-    # Set Bluetooth class manually and reset controller
+    # Set Bluetooth class and reset controller
     for i in {1..3}; do
         echo "Attempt $i: Configuring Bluetooth controller..."
         hciconfig hci0 down
@@ -100,15 +88,34 @@ EOF
         hciconfig hci0 up
         sleep 2
         if hciconfig hci0 class 0x6c0404; then
+            echo "Controller configured successfully"
             break
         fi
         echo "Retrying controller configuration..."
         sleep 2
     done
     
-    # Verify PipeWire is running with retries
+    # Verify Bluetooth is working
+    if ! hciconfig hci0 | grep -q "UP RUNNING"; then
+        echo "Error: Failed to initialize Bluetooth controller"
+        return 1
+    fi
+    
+    # Now start PipeWire services
+    echo "Starting PipeWire services..."
+    sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$USER_ID DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user start pipewire.socket
+    sleep 2
+    sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$USER_ID DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user start pipewire-pulse.socket
+    sleep 2
+    sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$USER_ID DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user start pipewire.service
+    sleep 2
+    sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$USER_ID DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" systemctl --user start pipewire-pulse.service
+    sleep 2
+    
+    # Verify PipeWire is running
     for i in {1..3}; do
         if sudo -u $REAL_USER XDG_RUNTIME_DIR=/run/user/$USER_ID DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus" pactl info >/dev/null 2>&1; then
+            echo "PipeWire is running"
             break
         fi
         echo "Attempt $i: PipeWire not responding. Restarting..."
@@ -124,7 +131,10 @@ enable_pairing() {
     local duration=$1
     
     echo "Initializing audio system..."
-    ensure_audio
+    ensure_audio || {
+        echo "Failed to initialize audio system"
+        return 1
+    }
     
     echo "Initializing Bluetooth..."
     
@@ -143,7 +153,7 @@ enable_pairing() {
         echo "Attempt $i: Configuring Bluetooth agent..."
         
         # Try to register agent
-        if bluetoothctl agent on && bluetoothctl default-agent; then
+        if bluetoothctl agent NoInputNoOutput && bluetoothctl default-agent; then
             echo "Agent registered successfully"
             break
         fi
