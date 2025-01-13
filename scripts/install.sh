@@ -52,17 +52,8 @@ apt-get install -y \
     python3-pip \
     python3-dbus \
     python3-gi \
-    python3-fastapi \
-    python3-uvicorn \
-    python3-dotenv \
-    python3-pydantic \
-    python3-loguru \
     python3-aiohttp \
-    python3-sounddevice \
     python3-numpy \
-    python3-multipart \
-    python3-jose \
-    python3-websockets \
     pipewire \
     pipewire-bin \
     pipewire-audio-client-libraries \
@@ -79,6 +70,19 @@ apt-get install -y \
     libdbus-glib-1-dev \
     libgirepository1.0-dev \
     gir1.2-gtk-3.0
+
+# Install Python packages that aren't available in Debian
+echo "Installing Python packages..."
+pip3 install --break-system-packages \
+    fastapi==0.104.1 \
+    uvicorn==0.24.0 \
+    python-dotenv==1.0.0 \
+    pydantic==2.5.2 \
+    loguru==0.7.2 \
+    sounddevice==0.4.6 \
+    python-multipart==0.0.6 \
+    python-jose==3.3.0 \
+    websockets==12.0
 
 # Create installation directory
 INSTALL_DIR="/opt/pi-audio-sync"
