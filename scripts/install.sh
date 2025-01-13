@@ -126,6 +126,9 @@ if [ ! -f /etc/pipewire/pipewire.conf ]; then
     cp /usr/share/pipewire/pipewire.conf /etc/pipewire/
 fi
 
+# Set proper ownership for user PipeWire config
+chown -R ${SUDO_USER}:${SUDO_USER} /home/${SUDO_USER}/.config/pipewire
+
 # Enable and start PipeWire services for the user
 echo "Enabling and starting PipeWire services..."
 DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus"
