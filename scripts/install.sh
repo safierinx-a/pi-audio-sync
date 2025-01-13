@@ -14,6 +14,9 @@ if [ "$SUDO_USER" = "root" ]; then
     exit 1
 fi
 
+# Get user's ID for systemd commands
+USER_ID=$(id -u $SUDO_USER)
+
 # System diagnostics
 echo "=== System Audio Diagnostics ==="
 echo "Checking audio devices..."
@@ -109,9 +112,11 @@ if [ ! -f /etc/pipewire/pipewire.conf ]; then
 fi
 
 # Enable PipeWire service for the user
-systemctl --user enable pipewire.socket
-systemctl --user enable pipewire.service
-systemctl --user enable wireplumber.service
+echo "Enabling PipeWire services..."
+export XDG_RUNTIME_DIR="/run/user/$USER_ID"
+su - ${SUDO_USER} -c "systemctl --user enable pipewire.socket"
+su - ${SUDO_USER} -c "systemctl --user enable pipewire.service"
+su - ${SUDO_USER} -c "systemctl --user enable wireplumber.service"
 
 # Add user to necessary groups
 usermod -a -G audio,bluetooth ${SUDO_USER}
