@@ -50,9 +50,19 @@ echo "Installing system dependencies..."
 apt-get update
 apt-get install -y \
     python3-pip \
-    python3-venv \
     python3-dbus \
     python3-gi \
+    python3-fastapi \
+    python3-uvicorn \
+    python3-dotenv \
+    python3-pydantic \
+    python3-loguru \
+    python3-aiohttp \
+    python3-sounddevice \
+    python3-numpy \
+    python3-multipart \
+    python3-jose \
+    python3-websockets \
     pipewire \
     pipewire-bin \
     pipewire-audio-client-libraries \
@@ -83,11 +93,6 @@ cp -r . ${INSTALL_DIR}/
 echo "Setting permissions..."
 chown -R ${SUDO_USER}:${SUDO_USER} ${INSTALL_DIR}
 
-# Create virtual environment
-echo "Creating Python virtual environment..."
-su - ${SUDO_USER} -c "cd ${INSTALL_DIR} && python3 -m venv venv"
-su - ${SUDO_USER} -c "cd ${INSTALL_DIR} && ./venv/bin/pip install -r requirements.txt"
-
 # Configure PipeWire
 echo "Configuring PipeWire..."
 # Create PipeWire config directory
@@ -106,6 +111,12 @@ systemctl --user enable wireplumber.service
 
 # Add user to necessary groups
 usermod -a -G audio,bluetooth ${SUDO_USER}
+
+# Install service file
+echo "Installing systemd service..."
+cp scripts/audio-sync.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable audio-sync
 
 echo "Installation complete!"
 echo "Please log out and log back in for group changes to take effect." 

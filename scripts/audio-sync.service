@@ -5,14 +5,13 @@ Wants=pipewire.service bluetooth.service
 
 [Service]
 Type=simple
-User=%i
-Group=%i
-# Add user to bluetooth group
-ExecStartPre=/usr/bin/sudo /usr/sbin/usermod -a -G bluetooth %i
+User=vo603-rpi-1
+Group=vo603-rpi-1
 WorkingDirectory=/opt/pi-audio-sync
 Environment=PYTHONPATH=/opt/pi-audio-sync
 EnvironmentFile=/opt/pi-audio-sync/.env
-ExecStart=/opt/pi-audio-sync/venv/bin/python -m src.main
+ExecStartPre=/usr/bin/sudo /usr/sbin/usermod -a -G bluetooth,audio vo603-rpi-1
+ExecStart=/usr/bin/python3 -m src.main
 Restart=always
 RestartSec=5
 StandardOutput=journal
