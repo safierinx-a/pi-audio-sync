@@ -5,12 +5,12 @@ Wants=pipewire.service bluetooth.service
 
 [Service]
 Type=simple
-User=%i
-Group=%i
+User=vo603-rpi-1
+Group=vo603-rpi-1
 WorkingDirectory=/opt/pi-audio-sync
 Environment=PYTHONPATH=/opt/pi-audio-sync
 EnvironmentFile=/opt/pi-audio-sync/.env
-ExecStartPre=/usr/bin/sudo /usr/sbin/usermod -a -G bluetooth,audio %i
+ExecStartPre=/usr/bin/sudo /usr/sbin/usermod -a -G bluetooth,audio vo603-rpi-1
 ExecStart=/usr/bin/python3 -m src.main
 Restart=always
 RestartSec=5
