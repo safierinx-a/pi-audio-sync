@@ -71,7 +71,6 @@ apt-get install -y \
     gir1.2-gtk-3.0 \
     wireplumber \
     pipewire-media-session \
-    bluetooth-tools \
     pulseaudio-module-bluetooth
 
 # Create installation directory
