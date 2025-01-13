@@ -41,6 +41,10 @@ ls -la /etc/pipewire/ || echo "No system PipeWire config found"
 ls -la /home/${SUDO_USER}/.config/pipewire/ || echo "No user PipeWire config found"
 echo
 
+echo "Checking Bluetooth status..."
+systemctl status bluetooth || echo "Bluetooth service not running"
+echo
+
 read -p "Continue with installation? (y/n) " -n 1 -r
 echo
 if [[ ! $REPLY =~ ^[Yy]$ ]]
@@ -96,6 +100,17 @@ mkdir -p ${INSTALL_DIR}
 echo "Copying files..."
 cp -r . ${INSTALL_DIR}/
 
+# Create .env file if it doesn't exist
+if [ ! -f ${INSTALL_DIR}/.env ]; then
+    echo "Creating .env file..."
+    cat > ${INSTALL_DIR}/.env << EOF
+# Environment configuration
+LOG_LEVEL=INFO
+HOST=0.0.0.0
+PORT=8000
+EOF
+fi
+
 # Set ownership
 echo "Setting permissions..."
 chown -R ${SUDO_USER}:${SUDO_USER} ${INSTALL_DIR}
@@ -111,12 +126,41 @@ if [ ! -f /etc/pipewire/pipewire.conf ]; then
     cp /usr/share/pipewire/pipewire.conf /etc/pipewire/
 fi
 
-# Enable PipeWire service for the user
-echo "Enabling PipeWire services..."
-export XDG_RUNTIME_DIR="/run/user/$USER_ID"
-su - ${SUDO_USER} -c "systemctl --user enable pipewire.socket"
-su - ${SUDO_USER} -c "systemctl --user enable pipewire.service"
-su - ${SUDO_USER} -c "systemctl --user enable wireplumber.service"
+# Enable and start PipeWire services for the user
+echo "Enabling and starting PipeWire services..."
+DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$USER_ID/bus"
+sudo -E -u ${SUDO_USER} \
+    XDG_RUNTIME_DIR="/run/user/$USER_ID" \
+    DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
+    systemctl --user enable --now pipewire.socket pipewire.service wireplumber.service
+
+# Configure Bluetooth
+echo "Configuring Bluetooth..."
+# Enable and start Bluetooth service
+systemctl enable --now bluetooth
+
+# Configure Bluetooth audio
+mkdir -p /etc/bluetooth
+cat > /etc/bluetooth/main.conf << EOF
+[General]
+Name = Pi Audio Sync
+Class = 0x6c0404
+DiscoverableTimeout = 0
+PairableTimeout = 0
+FastConnectable = true
+Privacy = off
+JustWorksRepairing = always
+MultiProfile = multiple
+Experimental = true
+
+[Policy]
+AutoEnable=true
+ReconnectAttempts=7
+ReconnectIntervals=1,2,4,8,16,32,64
+
+[GATT]
+Cache = always
+EOF
 
 # Add user to necessary groups
 usermod -a -G audio,bluetooth ${SUDO_USER}
@@ -128,4 +172,5 @@ systemctl daemon-reload
 systemctl enable audio-sync
 
 echo "Installation complete!"
-echo "Please log out and log back in for group changes to take effect." 
+echo "Please log out and log back in for group changes to take effect."
+echo "After logging back in, run: sudo systemctl start audio-sync" 
