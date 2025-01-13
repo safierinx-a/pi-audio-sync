@@ -68,10 +68,7 @@ apt-get install -y \
     libdbus-1-dev \
     libdbus-glib-1-dev \
     libgirepository1.0-dev \
-    gir1.2-gtk-3.0 \
-    wireplumber \
-    pipewire-media-session \
-    pulseaudio-module-bluetooth
+    gir1.2-gtk-3.0
 
 # Create installation directory
 INSTALL_DIR="/opt/pi-audio-sync"
