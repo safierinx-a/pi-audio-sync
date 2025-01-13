@@ -2,10 +2,12 @@
 API routes for Pi Audio Sync
 """
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from loguru import logger
 import subprocess
 import os
+from typing import List
+from pydantic import BaseModel
 
 from ..models import DeviceState, SystemState, VolumeUpdate
 from ..audio import AudioManager
@@ -157,3 +159,46 @@ async def get_bluetooth_status():
     except subprocess.CalledProcessError as e:
         logger.error(f"Failed to get Bluetooth status: {e.stderr}")
         raise HTTPException(status_code=500, detail="Failed to get Bluetooth status")
+
+
+class Device(BaseModel):
+    name: str
+    address: str
+    trusted: bool = False
+    paired: bool = False
+
+
+@router.post("/bluetooth/discovery/start")
+async def start_discovery(request: Request, duration: int = 60):
+    """Start Bluetooth discovery"""
+    bluetooth_manager = request.app.state.bluetooth_manager
+    if bluetooth_manager.start_discovery(duration):
+        return {"message": f"Started discovery for {duration} seconds"}
+    raise HTTPException(status_code=500, detail="Failed to start discovery")
+
+
+@router.post("/bluetooth/discovery/stop")
+async def stop_discovery(request: Request):
+    """Stop Bluetooth discovery"""
+    bluetooth_manager = request.app.state.bluetooth_manager
+    if bluetooth_manager.stop_discovery():
+        return {"message": "Stopped discovery"}
+    raise HTTPException(status_code=500, detail="Failed to stop discovery")
+
+
+@router.get("/bluetooth/devices", response_model=List[Device])
+async def get_devices(request: Request, paired: bool = False):
+    """Get list of Bluetooth devices"""
+    bluetooth_manager = request.app.state.bluetooth_manager
+    if paired:
+        return bluetooth_manager.get_connected_devices()
+    return bluetooth_manager.get_discoverable_devices()
+
+
+@router.post("/bluetooth/pair/{device_path}")
+async def pair_device(request: Request, device_path: str):
+    """Pair with a Bluetooth device"""
+    bluetooth_manager = request.app.state.bluetooth_manager
+    if bluetooth_manager.pair_device(device_path):
+        return {"message": "Pairing initiated"}
+    raise HTTPException(status_code=500, detail="Failed to initiate pairing")

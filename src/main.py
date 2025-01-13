@@ -7,8 +7,9 @@ import sys
 import uvicorn
 from fastapi import FastAPI
 from loguru import logger
+import threading
 
-from .audio import AudioManager
+from .audio import AudioManager, BluetoothManager
 from .api import router
 
 
@@ -51,9 +52,19 @@ def main():
         )
         app.include_router(router)
 
-        # Create audio manager
+        # Create managers
         audio_manager = AudioManager()
-        logger.info("Audio manager initialized successfully")
+        bluetooth_manager = BluetoothManager()
+
+        # Store managers in app state
+        app.state.audio_manager = audio_manager
+        app.state.bluetooth_manager = bluetooth_manager
+
+        logger.info("Audio and Bluetooth managers initialized successfully")
+
+        # Start Bluetooth manager in a separate thread
+        bluetooth_thread = threading.Thread(target=bluetooth_manager.start, daemon=True)
+        bluetooth_thread.start()
 
         # Start the FastAPI server
         host = os.getenv("HOST", "0.0.0.0")
@@ -65,6 +76,12 @@ def main():
     except Exception as e:
         logger.error(f"Failed to start application: {e}")
         sys.exit(1)
+    finally:
+        # Clean shutdown
+        if "bluetooth_manager" in locals():
+            bluetooth_manager.stop()
+        if bluetooth_thread.is_alive():
+            bluetooth_thread.join(timeout=5)
 
 
 if __name__ == "__main__":
