@@ -8,7 +8,7 @@ import subprocess
 from typing import List, Optional, Dict
 from loguru import logger
 
-from ..models import AudioSource, DeviceState, SystemState, DeviceType
+from ..models import DeviceState, SystemState, DeviceType
 
 
 class AudioManager:
