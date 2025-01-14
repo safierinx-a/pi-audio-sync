@@ -18,11 +18,11 @@ class AudioManager:
         try:
             # Initialize D-Bus
             dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
-            self.bus = dbus.SystemBus()
+            self.bus = dbus.SessionBus()
 
             # Get PipeWire interface
             self.pw_obj = self.bus.get_object(
-                "org.pipewire.pipewire.service", "/org/pipewire/pipewire"
+                "org.pipewire.pipewire", "/org/pipewire/pipewire"
             )
             self.pw = dbus.Interface(self.pw_obj, "org.pipewire.pipewire.core1")
 
