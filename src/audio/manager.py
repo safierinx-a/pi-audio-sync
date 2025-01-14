@@ -4,13 +4,9 @@ Audio Manager for Pi Audio Sync
 
 import os
 import json
+import subprocess
 from typing import List, Optional
 from loguru import logger
-import gi
-
-gi.require_version("Gst", "1.0")
-gi.require_version("Pipewire", "0.3")
-from gi.repository import GLib, Gst, Pipewire
 
 from ..models import AudioSource, DeviceState, SystemState, DeviceType
 
@@ -18,18 +14,12 @@ from ..models import AudioSource, DeviceState, SystemState, DeviceType
 class AudioManager:
     def __init__(self):
         try:
-            # Initialize GLib and PipeWire
-            Gst.init(None)
-            Pipewire.init()
-            self.loop = GLib.MainLoop()
-
-            # Get PipeWire context
-            self.context = Pipewire.Context.new(self.loop.get_context())
-            self.context.connect()
-
-            # Get core and registry
-            self.core = self.context.get_core()
-            self.registry = self.core.get_registry()
+            # Check if PipeWire is running
+            result = subprocess.run(
+                ["pw-cli", "info", "0"], capture_output=True, text=True
+            )
+            if result.returncode != 0:
+                raise Exception("PipeWire is not running")
 
             # Initialize device tracking
             self.devices = {}
@@ -44,14 +34,42 @@ class AudioManager:
         try:
             # Get audio sinks from PipeWire
             self.sinks = []
-
-            def registry_global(registry, object_id, type, version, props):
-                if type == "PipeWire:Interface:Node":
-                    if props.get("media.class") == "Audio/Sink":
-                        self.sinks.append({"id": object_id, "props": dict(props)})
-
-            self.registry.connect("global", registry_global)
-            self.registry.sync()
+            result = subprocess.run(
+                ["pw-cli", "ls", "Node"], capture_output=True, text=True
+            )
+            if result.returncode == 0:
+                for line in result.stdout.splitlines():
+                    if "Audio/Sink" in line:
+                        # Extract node ID and info
+                        node_id = line.split()[1]
+                        info = subprocess.run(
+                            ["pw-cli", "info", node_id], capture_output=True, text=True
+                        )
+                        if info.returncode == 0:
+                            props = {}
+                            for prop_line in info.stdout.splitlines():
+                                if ":" in prop_line:
+                                    key, value = prop_line.split(":", 1)
+                                    props[key.strip()] = value.strip()
+                            self.sinks.append(
+                                {
+                                    "id": node_id,
+                                    "props": {
+                                        "node.name": props.get("node.name", "Unknown"),
+                                        "node.description": props.get(
+                                            "node.description", ""
+                                        ),
+                                        "media.class": "Audio/Sink",
+                                        "node.volume": float(
+                                            props.get("node.volume", "1.0")
+                                        ),
+                                        "node.mute": props.get(
+                                            "node.mute", "false"
+                                        ).lower()
+                                        == "true",
+                                    },
+                                }
+                            )
 
             logger.info(f"Found {len(self.sinks)} audio sinks")
 
@@ -86,11 +104,19 @@ class AudioManager:
             volume = max(0, min(100, volume))  # Clamp volume between 0 and 100
             if 0 <= device_id < len(self.sinks):
                 sink = self.sinks[device_id]
-                node = self.core.lookup_proxy(sink["id"])
-                if node:
-                    props = node.get_properties()
-                    props["node.volume"] = volume / 100
-                    node.set_properties(props)
+                result = subprocess.run(
+                    [
+                        "pw-cli",
+                        "s",
+                        sink["id"],
+                        "Props",
+                        f'{{"volume": {volume / 100}}}',
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode == 0:
+                    sink["props"]["node.volume"] = volume / 100
                     logger.info(
                         f"Set volume to {volume}% for device {sink['props'].get('node.name')}"
                     )
@@ -105,11 +131,19 @@ class AudioManager:
         try:
             if 0 <= device_id < len(self.sinks):
                 sink = self.sinks[device_id]
-                node = self.core.lookup_proxy(sink["id"])
-                if node:
-                    props = node.get_properties()
-                    props["node.mute"] = muted
-                    node.set_properties(props)
+                result = subprocess.run(
+                    [
+                        "pw-cli",
+                        "s",
+                        sink["id"],
+                        "Props",
+                        f'{{"mute": {"true" if muted else "false"}}}',
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode == 0:
+                    sink["props"]["node.mute"] = muted
                     logger.info(
                         f"{'Muted' if muted else 'Unmuted'} device {sink['props'].get('node.name')}"
                     )
