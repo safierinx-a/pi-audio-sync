@@ -176,6 +176,16 @@ systemctl enable audio-sync
 
 # Configure PipeWire D-Bus service
 echo "Configuring PipeWire D-Bus service..."
+
+# Create session bus service file
+mkdir -p /usr/share/dbus-1/services
+cat > /usr/share/dbus-1/services/org.pipewire.pipewire.service << EOF
+[D-BUS Service]
+Name=org.pipewire.pipewire
+Exec=/usr/bin/pipewire
+EOF
+
+# Create system bus service file
 mkdir -p /usr/share/dbus-1/system-services
 cat > /usr/share/dbus-1/system-services/org.pipewire.pipewire.service << EOF
 [D-BUS Service]
@@ -192,11 +202,11 @@ cat > /etc/dbus-1/system.d/org.pipewire.pipewire.conf << EOF
  "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
 <busconfig>
   <policy user="root">
-    <allow own="org.pipewire.pipewire.service"/>
-    <allow send_destination="org.pipewire.pipewire.service"/>
+    <allow own="org.pipewire.pipewire"/>
+    <allow send_destination="org.pipewire.pipewire"/>
   </policy>
   <policy group="audio">
-    <allow send_destination="org.pipewire.pipewire.service"/>
+    <allow send_destination="org.pipewire.pipewire"/>
   </policy>
 </busconfig>
 EOF
