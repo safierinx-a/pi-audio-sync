@@ -42,7 +42,7 @@ ls -la /home/${SUDO_USER}/.config/pipewire/ || echo "No user PipeWire config fou
 echo
 
 echo "Checking Bluetooth status..."
-systemctl status bluetooth || echo "Bluetooth service not running"
+systemctl status bluetooth | cat || echo "Bluetooth service not running"
 echo
 
 read -p "Continue with installation? (y/n) " -n 1 -r
