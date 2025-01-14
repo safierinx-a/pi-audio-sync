@@ -1,7 +1,8 @@
 [Unit]
 Description=Pi Audio Sync Service
-After=network.target pipewire.service bluetooth.service
-Wants=pipewire.service bluetooth.service
+After=network.target bluetooth.service user@1000.service
+Wants=bluetooth.service
+Requires=user@1000.service
 
 [Service]
 Type=simple
@@ -9,8 +10,10 @@ User=vo603-rpi-1
 Group=vo603-rpi-1
 WorkingDirectory=/opt/pi-audio-sync
 Environment=PYTHONPATH=/opt/pi-audio-sync
-Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
 ExecStartPre=/usr/bin/sudo /usr/sbin/usermod -a -G bluetooth,audio vo603-rpi-1
+ExecStartPre=/bin/sleep 2
 ExecStart=/usr/bin/python3 -m src.main
 Restart=always
 RestartSec=5
