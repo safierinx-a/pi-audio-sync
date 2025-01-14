@@ -126,6 +126,51 @@ if [ ! -f /etc/pipewire/pipewire.conf ]; then
     cp /usr/share/pipewire/pipewire.conf /etc/pipewire/
 fi
 
+# Add Bluetooth audio optimization config
+cat > /etc/pipewire/pipewire.conf.d/99-bluetooth-audio.conf << EOF
+context.properties = {
+    default.clock.rate = 48000
+    default.clock.quantum = 1024
+    default.clock.min-quantum = 32
+    default.clock.max-quantum = 8192
+}
+
+context.modules = [
+    { name = libpipewire-module-protocol-native }
+    { name = libpipewire-module-profiler }
+    { name = libpipewire-module-metadata }
+    { name = libpipewire-module-spa-device-factory }
+    { name = libpipewire-module-spa-node-factory }
+    { name = libpipewire-module-client-node }
+    { name = libpipewire-module-client-device }
+    { name = libpipewire-module-portal }
+    { name = libpipewire-module-access }
+    { name = libpipewire-module-adapter }
+    { name = libpipewire-module-link-factory }
+    { name = libpipewire-module-session-manager }
+    {
+        name = libpipewire-module-bluetooth
+        properties = {
+            bluez5.enable-sbc-xq = true
+            bluez5.enable-msbc = true
+            bluez5.enable-hw-volume = true
+            bluez5.headset-roles = [ hsp_hs hfp_ag ]
+            bluez5.codecs = [ sbc_xq ldac aac ]
+            bluez5.msbc-support = true
+            bluez5.msbc-quality = high
+            bluez5.auto-connect = true
+        }
+    }
+]
+
+stream.properties = {
+    node.latency = 1024/48000
+    resample.quality = 7
+    channelmix.normalize = false
+    channelmix.mix-lfe = false
+}
+EOF
+
 # Set proper ownership for user PipeWire config
 chown -R ${SUDO_USER}:${SUDO_USER} /home/${SUDO_USER}/.config/pipewire
 
