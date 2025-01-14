@@ -61,6 +61,7 @@ apt-get install -y \
     python3-gi \
     python3-aiohttp \
     python3-numpy \
+    python3-pipewire \
     pipewire \
     pipewire-bin \
     pipewire-audio-client-libraries \
@@ -68,7 +69,6 @@ apt-get install -y \
     libspa-0.2-dev \
     wireplumber \
     bluez \
-    bluez-tools \
     alsa-utils \
     libasound2-dev \
     portaudio19-dev \
