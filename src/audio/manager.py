@@ -63,16 +63,11 @@ class AudioManager:
                             f"Found media class: {media_class} for node {current_node_id}"
                         )
 
-                        if any(
-                            cls in media_class
-                            for cls in [
-                                "Audio/Sink",
-                                "Stream/Output/Audio",
-                                "Audio/Source",
-                            ]
-                        ):
+                        # Only process Audio/Sink nodes (output devices)
+                        # Skip Audio/Source nodes (like iPhone playing music)
+                        if "Audio/Sink" in media_class:
                             try:
-                                logger.debug(f"Processing audio node {current_node_id}")
+                                logger.debug(f"Processing audio sink {current_node_id}")
 
                                 # Get detailed info about the node
                                 info = subprocess.run(
@@ -117,7 +112,7 @@ class AudioManager:
                                     )
                                     node_desc = props.get("node.description", node_name)
                                     logger.info(
-                                        f"Found device: {node_desc} ({node_name})"
+                                        f"Found sink device: {node_desc} ({node_name})"
                                     )
 
                                     # Restore previous state or use safe defaults
@@ -215,19 +210,40 @@ class AudioManager:
             # Refresh devices to catch any changes
             self.refresh_devices()
 
-            devices = [
-                DeviceState(
-                    id=i,
-                    name=sink["props"].get(
-                        "node.description", sink["props"].get("node.name", "Unknown")
-                    ),
-                    type=self._determine_device_type(sink["props"]),
-                    volume=int(float(sink["props"].get("node.volume", 1.0)) * 100),
-                    muted=bool(sink["props"].get("node.mute", False)),
-                    active=True,  # All devices are always active
+            devices = []
+            for i, sink in enumerate(self.sinks):
+                # Get current volume from PipeWire for accurate reporting
+                try:
+                    info = subprocess.run(
+                        ["pw-cli", "info", sink["id"]],
+                        capture_output=True,
+                        text=True,
+                    )
+                    if info.returncode == 0:
+                        for line in info.stdout.splitlines():
+                            if "volume" in line and ":" in line:
+                                try:
+                                    volume = float(line.split(":", 1)[1].strip())
+                                    sink["props"]["node.volume"] = volume
+                                except (ValueError, IndexError):
+                                    pass
+                except Exception as e:
+                    logger.error(f"Error getting device volume: {e}")
+
+                devices.append(
+                    DeviceState(
+                        id=i,
+                        name=sink["props"].get(
+                            "node.description",
+                            sink["props"].get("node.name", "Unknown"),
+                        ),
+                        type=self._determine_device_type(sink["props"]),
+                        volume=int(float(sink["props"].get("node.volume", 1.0)) * 100),
+                        muted=bool(sink["props"].get("node.mute", False)),
+                        active=True,  # All devices are always active
+                    )
                 )
-                for i, sink in enumerate(self.sinks)
-            ]
+
             logger.debug(f"Returning {len(devices)} devices: {devices}")
             return devices
         except Exception as e:
@@ -253,6 +269,8 @@ class AudioManager:
             volume = max(0, min(100, volume))  # Clamp volume between 0 and 100
             if 0 <= device_id < len(self.sinks):
                 sink = self.sinks[device_id]
+
+                # Set volume for the sink
                 result = subprocess.run(
                     [
                         "pw-cli",
@@ -289,6 +307,8 @@ class AudioManager:
         try:
             if 0 <= device_id < len(self.sinks):
                 sink = self.sinks[device_id]
+
+                # Set mute state for the sink
                 result = subprocess.run(
                     [
                         "pw-cli",
