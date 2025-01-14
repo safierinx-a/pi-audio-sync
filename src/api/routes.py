@@ -6,22 +6,31 @@ from fastapi import APIRouter, HTTPException, Depends, Request
 from loguru import logger
 import subprocess
 import os
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel
 
 from ..models import DeviceState, SystemState, VolumeUpdate
-from ..audio import AudioManager
+from ..audio import AudioManager, BluetoothManager
 
 router = APIRouter(prefix="/api/v1")
-_manager: AudioManager = None
+_audio_manager: AudioManager = None
+_bluetooth_manager: BluetoothManager = None
 
 
 async def get_audio_manager() -> AudioManager:
     """Get or create AudioManager instance"""
-    global _manager
-    if _manager is None:
-        _manager = AudioManager()
-    return _manager
+    global _audio_manager
+    if _audio_manager is None:
+        _audio_manager = AudioManager()
+    return _audio_manager
+
+
+async def get_bluetooth_manager() -> BluetoothManager:
+    """Get or create BluetoothManager instance"""
+    global _bluetooth_manager
+    if _bluetooth_manager is None:
+        _bluetooth_manager = BluetoothManager()
+    return _bluetooth_manager
 
 
 @router.get("/status")
@@ -52,13 +61,13 @@ async def get_device(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.put("/devices/{device_id}/volume")
-async def set_volume(
+@router.post("/devices/{device_id}/volume")
+async def set_volume_post(
     device_id: int,
     update: VolumeUpdate,
     manager: AudioManager = Depends(get_audio_manager),
 ):
-    """Set device volume"""
+    """Set device volume (POST method)"""
     try:
         if not manager.set_volume(device_id, update.volume):
             raise HTTPException(status_code=400, detail="Failed to set volume")
@@ -96,6 +105,82 @@ async def unmute_device(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/bluetooth/devices")
+async def get_bluetooth_devices(
+    manager: BluetoothManager = Depends(get_bluetooth_manager),
+):
+    """Get list of Bluetooth devices"""
+    try:
+        return manager.get_devices()
+    except Exception as e:
+        logger.error(f"Error getting Bluetooth devices: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/bluetooth/discovery/start")
+async def start_discovery(manager: BluetoothManager = Depends(get_bluetooth_manager)):
+    """Start Bluetooth discovery"""
+    try:
+        manager.start_discovery()
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"Error starting discovery: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/bluetooth/discovery/stop")
+async def stop_discovery(manager: BluetoothManager = Depends(get_bluetooth_manager)):
+    """Stop Bluetooth discovery"""
+    try:
+        manager.stop_discovery()
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"Error stopping discovery: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/bluetooth/devices/{address}/pair")
+async def pair_device(
+    address: str, manager: BluetoothManager = Depends(get_bluetooth_manager)
+):
+    """Pair with a Bluetooth device"""
+    try:
+        if not manager.pair_device(address):
+            raise HTTPException(status_code=400, detail="Failed to pair device")
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"Error pairing device: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/bluetooth/devices/{address}/connect")
+async def connect_device(
+    address: str, manager: BluetoothManager = Depends(get_bluetooth_manager)
+):
+    """Connect to a Bluetooth device"""
+    try:
+        if not manager.connect_device(address):
+            raise HTTPException(status_code=400, detail="Failed to connect device")
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"Error connecting device: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/bluetooth/devices/{address}/disconnect")
+async def disconnect_device(
+    address: str, manager: BluetoothManager = Depends(get_bluetooth_manager)
+):
+    """Disconnect from a Bluetooth device"""
+    try:
+        if not manager.disconnect_device(address):
+            raise HTTPException(status_code=400, detail="Failed to disconnect device")
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"Error disconnecting device: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/hass/states")
 async def get_hass_states(manager: AudioManager = Depends(get_audio_manager)):
     """Get states for Home Assistant"""
@@ -120,85 +205,9 @@ async def get_hass_states(manager: AudioManager = Depends(get_audio_manager)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/bluetooth/pairing")
-async def enable_pairing_mode(duration: int = 60):
-    """Enable Bluetooth pairing mode for the specified duration."""
-    try:
-        script_path = os.path.join(
-            os.environ.get("INSTALL_DIR", "/opt/pi-audio-sync"), "scripts/bluetooth.sh"
-        )
-        result = subprocess.run(
-            [script_path, "enable", str(duration)],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        logger.info(f"Enabled Bluetooth pairing: {result.stdout}")
-        return {"message": "Pairing mode enabled", "duration": duration}
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to enable pairing mode: {e.stderr}")
-        raise HTTPException(status_code=500, detail="Failed to enable pairing mode")
-
-
-@router.get("/bluetooth/status")
-async def get_bluetooth_status():
-    """Get current Bluetooth status."""
-    try:
-        script_path = os.path.join(
-            os.environ.get("INSTALL_DIR", "/opt/pi-audio-sync"), "scripts/bluetooth.sh"
-        )
-        result = subprocess.run(
-            [script_path, "status"], capture_output=True, text=True, check=True
-        )
-        status_lines = result.stdout.strip().split("\n")
-        status = {}
-        for line in status_lines:
-            key, value = line.split(":", 1)
-            status[key.strip()] = value.strip()
-        return status
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to get Bluetooth status: {e.stderr}")
-        raise HTTPException(status_code=500, detail="Failed to get Bluetooth status")
-
-
-class Device(BaseModel):
-    name: str
-    address: str
-    trusted: bool = False
-    paired: bool = False
-
-
-@router.post("/bluetooth/discovery/start")
-async def start_discovery(request: Request, duration: int = 60):
-    """Start Bluetooth discovery"""
-    bluetooth_manager = request.app.state.bluetooth_manager
-    if bluetooth_manager.start_discovery(duration):
-        return {"message": f"Started discovery for {duration} seconds"}
-    raise HTTPException(status_code=500, detail="Failed to start discovery")
-
-
-@router.post("/bluetooth/discovery/stop")
-async def stop_discovery(request: Request):
-    """Stop Bluetooth discovery"""
-    bluetooth_manager = request.app.state.bluetooth_manager
-    if bluetooth_manager.stop_discovery():
-        return {"message": "Stopped discovery"}
-    raise HTTPException(status_code=500, detail="Failed to stop discovery")
-
-
-@router.get("/bluetooth/devices", response_model=List[Device])
-async def get_devices(request: Request, paired: bool = False):
-    """Get list of Bluetooth devices"""
-    bluetooth_manager = request.app.state.bluetooth_manager
-    if paired:
-        return bluetooth_manager.get_connected_devices()
-    return bluetooth_manager.get_discoverable_devices()
-
-
-@router.post("/bluetooth/pair/{device_path}")
-async def pair_device(request: Request, device_path: str):
-    """Pair with a Bluetooth device"""
-    bluetooth_manager = request.app.state.bluetooth_manager
-    if bluetooth_manager.pair_device(device_path):
-        return {"message": "Pairing initiated"}
-    raise HTTPException(status_code=500, detail="Failed to initiate pairing")
+@router.post("/devices/{device_id}/default")
+async def set_default_device(device_id: int):
+    """Set the default audio output device"""
+    if not get_audio_manager().set_default_device(device_id):
+        raise HTTPException(status_code=404, detail="Device not found")
+    return {"status": "ok"}
