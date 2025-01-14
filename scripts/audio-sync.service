@@ -9,13 +9,11 @@ User=vo603-rpi-1
 Group=vo603-rpi-1
 WorkingDirectory=/opt/pi-audio-sync
 Environment=PYTHONPATH=/opt/pi-audio-sync
-EnvironmentFile=/opt/pi-audio-sync/.env
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket
 ExecStartPre=/usr/bin/sudo /usr/sbin/usermod -a -G bluetooth,audio vo603-rpi-1
 ExecStart=/usr/bin/python3 -m src.main
 Restart=always
 RestartSec=5
-StandardOutput=journal
-StandardError=journal
 
 [Install]
 WantedBy=multi-user.target 
