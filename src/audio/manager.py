@@ -16,15 +16,15 @@ from ..models import AudioSource, DeviceState, SystemState, DeviceType
 class AudioManager:
     def __init__(self):
         try:
-            # Initialize D-Bus
-            dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+            # Set environment variables to connect to user session
+            os.environ["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path=/run/user/1000/bus"
+            os.environ["XDG_RUNTIME_DIR"] = "/run/user/1000"
+
+            # Connect to session bus
             self.bus = dbus.SessionBus()
 
-            # Get PipeWire interface
-            self.pw_obj = self.bus.get_object(
-                "org.pipewire.pipewire", "/org/pipewire/pipewire"
-            )
-            self.pw = dbus.Interface(self.pw_obj, "org.pipewire.pipewire.core1")
+            # Get PipeWire object
+            obj = self.bus.get_object("org.pipewire.pipewire", "/org/pipewire/pipewire")
 
             # Initialize device tracking
             self.devices = {}
