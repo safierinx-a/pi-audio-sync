@@ -2,7 +2,7 @@
 API routes for Pi Audio Sync
 """
 
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends, Request, Body
 from loguru import logger
 import subprocess
 import os
@@ -64,14 +64,18 @@ async def get_device(
 @router.post("/devices/{device_id}/volume")
 async def set_volume_post(
     device_id: int,
-    update: VolumeUpdate,
+    volume: int = Body(..., embed=True),
     manager: AudioManager = Depends(get_audio_manager),
 ):
     """Set device volume (POST method)"""
     try:
-        if not manager.set_volume(device_id, update.volume):
+        logger.debug(f"Setting volume for device {device_id} to {volume}")
+        if not manager.set_volume(device_id, volume):
             raise HTTPException(status_code=400, detail="Failed to set volume")
         return {"status": "ok"}
+    except ValueError as e:
+        logger.error(f"Invalid volume value: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error setting volume: {e}")
         raise HTTPException(status_code=500, detail=str(e))
