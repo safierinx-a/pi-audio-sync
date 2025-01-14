@@ -43,149 +43,140 @@ class AudioManager:
                 logger.debug(result.stdout)
 
                 lines = result.stdout.splitlines()
+                current_node_id = None
                 for i, line in enumerate(lines):
-                    # Look for both Audio/Sink and Stream/Output/Audio
-                    if any(
-                        cls in line
-                        for cls in ["Audio/Sink", "Stream/Output/Audio", "Audio/Source"]
-                    ):
+                    line = line.strip()
+
+                    # Look for node ID at the start of an object
+                    if line.startswith("id"):
                         try:
-                            logger.debug(f"Processing line: {line}")
+                            current_node_id = line.split()[1].rstrip(",")
+                            logger.debug(f"Found potential node ID: {current_node_id}")
+                        except Exception:
+                            current_node_id = None
+                            continue
 
-                            # Extract node ID - be more lenient
-                            # Try different formats:
-                            # 1. id <number>
-                            # 2. <number>,
-                            # 3. Just look for first number in the line
-                            node_id = None
-                            if "id" in line:
-                                parts = line.split("id")
-                                if len(parts) > 1:
-                                    node_id = parts[1].strip().split()[0].rstrip(",")
-                            if not node_id:
-                                # Try to find first number in line
-                                import re
+                    # Look for media class in subsequent lines
+                    elif current_node_id and "media.class = " in line:
+                        media_class = line.split("=")[1].strip().strip('"')
+                        logger.debug(
+                            f"Found media class: {media_class} for node {current_node_id}"
+                        )
 
-                                numbers = re.findall(r"\d+", line)
-                                if numbers:
-                                    node_id = numbers[0]
+                        if any(
+                            cls in media_class
+                            for cls in [
+                                "Audio/Sink",
+                                "Stream/Output/Audio",
+                                "Audio/Source",
+                            ]
+                        ):
+                            try:
+                                logger.debug(f"Processing audio node {current_node_id}")
 
-                            if not node_id:
-                                logger.warning(
-                                    f"Could not extract node ID from line: {line}"
-                                )
-                                continue
-
-                            logger.debug(f"Found node ID: {node_id}")
-
-                            # Get detailed info about the node
-                            info = subprocess.run(
-                                ["pw-cli", "info", node_id],
-                                capture_output=True,
-                                text=True,
-                            )
-
-                            logger.debug(f"Node {node_id} info output:")
-                            logger.debug(info.stdout)
-
-                            if info.returncode == 0:
-                                props = {}
-                                current_key = None
-                                for prop_line in info.stdout.splitlines():
-                                    if prop_line.startswith("*"):
-                                        # Handle multi-line properties
-                                        if ":" in prop_line:
-                                            current_key = (
-                                                prop_line.split(":", 1)[0]
-                                                .strip()
-                                                .strip("*")
-                                            )
-                                            value = prop_line.split(":", 1)[1].strip()
-                                            props[current_key] = value
-                                        elif current_key:
-                                            # Append to previous value
-                                            props[current_key] += (
-                                                " " + prop_line.strip()
-                                            )
-
-                                logger.debug(f"Parsed properties for node {node_id}:")
-                                logger.debug(props)
-
-                                # Skip non-audio devices
-                                media_class = props.get("media.class", "")
-                                if not any(
-                                    cls in media_class
-                                    for cls in [
-                                        "Audio/Sink",
-                                        "Stream/Output/Audio",
-                                        "Audio/Source",
-                                    ]
-                                ):
-                                    logger.debug(
-                                        f"Skipping node {node_id} with media class {media_class}"
-                                    )
-                                    continue
-
-                                # Use node.name as unique identifier
-                                node_name = props.get("node.name", f"device_{node_id}")
-                                node_desc = props.get("node.description", node_name)
-                                logger.info(f"Found device: {node_desc} ({node_name})")
-
-                                # Restore previous state or use safe defaults
-                                if node_name in self.device_states:
-                                    saved_state = self.device_states[node_name]
-                                    volume = saved_state.get("volume", 5)
-                                    muted = saved_state.get("muted", False)
-                                else:
-                                    volume = 5
-                                    muted = False
-
-                                sink_info = {
-                                    "id": node_id,
-                                    "props": {
-                                        "node.name": node_name,
-                                        "node.description": node_desc,
-                                        "media.class": media_class,
-                                        "node.volume": volume / 100,
-                                        "node.mute": muted,
-                                        "device.api": props.get("device.api", ""),
-                                        "factory.name": props.get("factory.name", ""),
-                                        "object.path": props.get("object.path", ""),
-                                    },
-                                }
-
-                                self.sinks.append(sink_info)
-                                logger.info(f"Added sink: {sink_info}")
-
-                                # Save state for future reference
-                                self.device_states[node_name] = {
-                                    "volume": volume,
-                                    "muted": muted,
-                                }
-
-                                # Set initial volume for new devices
-                                if node_name not in self.device_states:
-                                    subprocess.run(
-                                        [
-                                            "pw-cli",
-                                            "s",
-                                            node_id,
-                                            "Props",
-                                            f'{{"volume": {volume / 100}}}',
-                                        ],
-                                        capture_output=True,
-                                        text=True,
-                                    )
-
-                                # Ensure the device is linked (active)
-                                subprocess.run(
-                                    ["pw-cli", "l", node_id],
+                                # Get detailed info about the node
+                                info = subprocess.run(
+                                    ["pw-cli", "info", current_node_id],
                                     capture_output=True,
                                     text=True,
                                 )
-                        except Exception as e:
-                            logger.error(f"Error processing node: {e}")
-                            continue
+
+                                logger.debug(f"Node {current_node_id} info output:")
+                                logger.debug(info.stdout)
+
+                                if info.returncode == 0:
+                                    props = {}
+                                    current_key = None
+                                    for prop_line in info.stdout.splitlines():
+                                        if prop_line.startswith("*"):
+                                            # Handle multi-line properties
+                                            if ":" in prop_line:
+                                                current_key = (
+                                                    prop_line.split(":", 1)[0]
+                                                    .strip()
+                                                    .strip("*")
+                                                )
+                                                value = prop_line.split(":", 1)[
+                                                    1
+                                                ].strip()
+                                                props[current_key] = value
+                                            elif current_key:
+                                                # Append to previous value
+                                                props[current_key] += (
+                                                    " " + prop_line.strip()
+                                                )
+
+                                    logger.debug(
+                                        f"Parsed properties for node {current_node_id}:"
+                                    )
+                                    logger.debug(props)
+
+                                    # Use node.name as unique identifier
+                                    node_name = props.get(
+                                        "node.name", f"device_{current_node_id}"
+                                    )
+                                    node_desc = props.get("node.description", node_name)
+                                    logger.info(
+                                        f"Found device: {node_desc} ({node_name})"
+                                    )
+
+                                    # Restore previous state or use safe defaults
+                                    if node_name in self.device_states:
+                                        saved_state = self.device_states[node_name]
+                                        volume = saved_state.get("volume", 5)
+                                        muted = saved_state.get("muted", False)
+                                    else:
+                                        volume = 5
+                                        muted = False
+
+                                    sink_info = {
+                                        "id": current_node_id,
+                                        "props": {
+                                            "node.name": node_name,
+                                            "node.description": node_desc,
+                                            "media.class": media_class,
+                                            "node.volume": volume / 100,
+                                            "node.mute": muted,
+                                            "device.api": props.get("device.api", ""),
+                                            "factory.name": props.get(
+                                                "factory.name", ""
+                                            ),
+                                            "object.path": props.get("object.path", ""),
+                                        },
+                                    }
+
+                                    self.sinks.append(sink_info)
+                                    logger.info(f"Added sink: {sink_info}")
+
+                                    # Save state for future reference
+                                    self.device_states[node_name] = {
+                                        "volume": volume,
+                                        "muted": muted,
+                                    }
+
+                                    # Set initial volume for new devices
+                                    if node_name not in self.device_states:
+                                        subprocess.run(
+                                            [
+                                                "pw-cli",
+                                                "s",
+                                                current_node_id,
+                                                "Props",
+                                                f'{{"volume": {volume / 100}}}',
+                                            ],
+                                            capture_output=True,
+                                            text=True,
+                                        )
+
+                                    # Ensure the device is linked (active)
+                                    subprocess.run(
+                                        ["pw-cli", "l", current_node_id],
+                                        capture_output=True,
+                                        text=True,
+                                    )
+                            except Exception as e:
+                                logger.error(f"Error processing node: {e}")
+                                continue
 
             logger.info(f"Found {len(self.sinks)} audio sinks")
             for sink in self.sinks:
