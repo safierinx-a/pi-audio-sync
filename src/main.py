@@ -43,6 +43,7 @@ def main():
     if not setup_logging():
         sys.exit(1)
 
+    bluetooth_thread = None
     try:
         # Create FastAPI app
         app = FastAPI(
@@ -80,7 +81,7 @@ def main():
         # Clean shutdown
         if "bluetooth_manager" in locals():
             bluetooth_manager.stop()
-        if bluetooth_thread.is_alive():
+        if bluetooth_thread and bluetooth_thread.is_alive():
             bluetooth_thread.join(timeout=5)
 
 
