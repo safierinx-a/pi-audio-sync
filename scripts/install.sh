@@ -174,6 +174,14 @@ cp scripts/audio-sync.service /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable audio-sync
 
+# Configure PipeWire D-Bus service
+echo "Configuring PipeWire D-Bus service..."
+cat > /usr/share/dbus-1/services/org.pipewire.pipewire.service << EOF
+[D-BUS Service]
+Name=org.pipewire.pipewire.service
+Exec=/usr/bin/pipewire
+EOF
+
 echo "Installation complete!"
 echo "Please log out and log back in for group changes to take effect."
 echo "After logging back in, run: sudo systemctl start audio-sync" 
