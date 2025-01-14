@@ -184,18 +184,83 @@ class AudioManager:
 
     def refresh_devices(self):
         """Refresh the list of audio devices while maintaining states"""
-        current_states = self.device_states.copy()
-        self._init_audio()
-        # Restore any previously saved states
-        for sink in self.sinks:
-            node_name = sink["props"]["node.name"]
-            if node_name in current_states:
-                self.set_volume(
-                    self._get_device_id_by_name(node_name),
-                    current_states[node_name]["volume"],
-                )
-                if current_states[node_name]["muted"]:
-                    self.set_mute(self._get_device_id_by_name(node_name), True)
+        try:
+            # Store current states
+            current_states = self.device_states.copy()
+            current_sinks = {sink["props"]["node.name"]: sink for sink in self.sinks}
+
+            # Reinitialize devices
+            self._init_audio()
+
+            # Restore states for existing devices
+            for sink in self.sinks:
+                node_name = sink["props"]["node.name"]
+                if node_name in current_states:
+                    # Restore volume
+                    try:
+                        volume = current_states[node_name]["volume"]
+                        subprocess.run(
+                            [
+                                "pw-cli",
+                                "s",
+                                sink["id"],
+                                "Props",
+                                f'{{"volume": {volume / 100}}}',
+                            ],
+                            capture_output=True,
+                            text=True,
+                        )
+                        sink["props"]["node.volume"] = volume / 100
+                    except Exception as e:
+                        logger.error(f"Error restoring volume for {node_name}: {e}")
+
+                    # Restore mute state
+                    try:
+                        muted = current_states[node_name]["muted"]
+                        subprocess.run(
+                            [
+                                "pw-cli",
+                                "s",
+                                sink["id"],
+                                "Props",
+                                f'{{"mute": {str(muted).lower()}}}',
+                            ],
+                            capture_output=True,
+                            text=True,
+                        )
+                        sink["props"]["node.mute"] = muted
+                    except Exception as e:
+                        logger.error(f"Error restoring mute state for {node_name}: {e}")
+                else:
+                    # New device - set safe initial volume
+                    try:
+                        subprocess.run(
+                            ["pw-cli", "s", sink["id"], "Props", '{"volume": 0.05}'],
+                            capture_output=True,
+                            text=True,
+                        )
+                        sink["props"]["node.volume"] = 0.05
+                        self.device_states[node_name] = {"volume": 5, "muted": False}
+                    except Exception as e:
+                        logger.error(
+                            f"Error setting initial volume for {node_name}: {e}"
+                        )
+
+                    # Ensure device is linked (active)
+                    try:
+                        subprocess.run(
+                            ["pw-cli", "l", sink["id"]],
+                            capture_output=True,
+                            text=True,
+                        )
+                    except Exception as e:
+                        logger.error(f"Error linking device {node_name}: {e}")
+
+        except Exception as e:
+            logger.error(f"Error refreshing devices: {e}")
+            # Restore original states on error
+            self.sinks = [sink for sink in current_sinks.values()]
+            self.device_states = current_states
 
     def _get_device_id_by_name(self, node_name: str) -> Optional[int]:
         """Get device ID by node name"""
@@ -250,17 +315,28 @@ class AudioManager:
             logger.error(f"Error getting devices: {e}")
             return []
 
-    def _determine_device_type(self, props: dict) -> DeviceType:
-        """Determine the type of audio device based on its properties"""
-        if props.get("device.api") == "bluez5" or "bluez" in props.get(
-            "factory.name", ""
-        ):
-            return DeviceType.BLUETOOTH
-        elif "usb" in props.get("object.path", "").lower():
-            return DeviceType.USB
-        elif "alsa" in props.get("factory.name", "").lower():
+    def _determine_device_type(self, props: dict) -> str:
+        """Determine device type from properties"""
+        try:
+            # Check for USB devices
+            if "alsa" in props.get("device.api", "").lower():
+                if (
+                    "usb" in props.get("node.description", "").lower()
+                    or "usb" in props.get("factory.name", "").lower()
+                ):
+                    return DeviceType.USB
+
+            # Check for Bluetooth devices
+            if (
+                "bluetooth" in props.get("device.api", "").lower()
+                or "bluez" in props.get("factory.name", "").lower()
+            ):
+                return DeviceType.BLUETOOTH
+
+            # Default to built-in
             return DeviceType.BUILTIN
-        else:
+        except Exception as e:
+            logger.error(f"Error determining device type: {e}")
             return DeviceType.BUILTIN
 
     def set_volume(self, device_id: int, volume: int) -> bool:
