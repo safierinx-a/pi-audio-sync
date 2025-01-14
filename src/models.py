@@ -2,28 +2,19 @@
 Shared models for Pi Audio Sync
 """
 
-from dataclasses import dataclass
-from typing import Optional, List
 from enum import Enum
+from typing import List, Optional
+from pydantic import BaseModel
 
 
-class DeviceType(Enum):
+class DeviceType(str, Enum):
     BUILTIN = "builtin"
     USB = "usb"
+    BLUETOOTH = "bluetooth"
 
 
-@dataclass
-class AudioSource:
-    name: str
-    mac_address: str
-    connected: bool = False
-    trusted: bool = False
-    type: str = "bluetooth"
-
-
-@dataclass
-class DeviceState:
-    id: str
+class DeviceState(BaseModel):
+    id: int
     name: str
     type: DeviceType
     volume: int
@@ -31,13 +22,11 @@ class DeviceState:
     active: bool
 
 
-@dataclass
-class SystemState:
+class SystemState(BaseModel):
     devices: List[DeviceState]
-    current_source: Optional[AudioSource] = None
-    available_sources: List[AudioSource] = None
+    current_source: Optional[str] = None
+    available_sources: Optional[List[str]] = None
 
 
-@dataclass
-class VolumeUpdate:
+class VolumeUpdate(BaseModel):
     volume: int

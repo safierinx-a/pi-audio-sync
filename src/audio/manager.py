@@ -40,7 +40,10 @@ class AudioManager:
             )
             if result.returncode == 0:
                 for line in result.stdout.splitlines():
-                    if "Audio/Sink" in line:
+                    # Look for both Audio/Sink and Stream/Output/Audio
+                    if any(
+                        cls in line for cls in ["Audio/Sink", "Stream/Output/Audio"]
+                    ):
                         # Extract node ID and info
                         node_id = line.split()[1]
                         info = subprocess.run(
@@ -53,8 +56,17 @@ class AudioManager:
                                     key, value = prop_line.split(":", 1)
                                     props[key.strip()] = value.strip()
 
+                            # Skip non-audio devices
+                            media_class = props.get("media.class", "")
+                            if not any(
+                                cls in media_class
+                                for cls in ["Audio/Sink", "Stream/Output/Audio"]
+                            ):
+                                continue
+
                             # Use node.name as unique identifier
                             node_name = props.get("node.name", "Unknown")
+                            node_desc = props.get("node.description", node_name)
 
                             # Restore previous state or use safe defaults
                             if node_name in self.device_states:
@@ -72,12 +84,14 @@ class AudioManager:
                                 "id": node_id,
                                 "props": {
                                     "node.name": node_name,
-                                    "node.description": props.get(
-                                        "node.description", ""
-                                    ),
-                                    "media.class": "Audio/Sink",
+                                    "node.description": node_desc,
+                                    "media.class": media_class,
                                     "node.volume": volume / 100,
                                     "node.mute": muted,
+                                    # Store additional properties for device type detection
+                                    "device.api": props.get("device.api", ""),
+                                    "factory.name": props.get("factory.name", ""),
+                                    "object.path": props.get("object.path", ""),
                                 },
                             }
 
@@ -149,9 +163,7 @@ class AudioManager:
                     name=sink["props"].get(
                         "node.description", sink["props"].get("node.name", "Unknown")
                     ),
-                    type=DeviceType.USB
-                    if "usb" in sink["props"].get("node.name", "").lower()
-                    else DeviceType.BUILTIN,
+                    type=self._determine_device_type(sink["props"]),
                     volume=int(float(sink["props"].get("node.volume", 1.0)) * 100),
                     muted=bool(sink["props"].get("node.mute", False)),
                     active=True,  # All devices are always active
@@ -161,6 +173,19 @@ class AudioManager:
         except Exception as e:
             logger.error(f"Error getting devices: {e}")
             return []
+
+    def _determine_device_type(self, props: dict) -> DeviceType:
+        """Determine the type of audio device based on its properties"""
+        if props.get("device.api") == "bluez5" or "bluez" in props.get(
+            "factory.name", ""
+        ):
+            return DeviceType.BLUETOOTH
+        elif "usb" in props.get("object.path", "").lower():
+            return DeviceType.USB
+        elif "alsa" in props.get("factory.name", "").lower():
+            return DeviceType.BUILTIN
+        else:
+            return DeviceType.BUILTIN
 
     def set_volume(self, device_id: int, volume: int) -> bool:
         """Set volume for a device"""
