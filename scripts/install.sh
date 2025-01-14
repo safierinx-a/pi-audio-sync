@@ -61,7 +61,6 @@ apt-get install -y \
     python3-gi \
     python3-aiohttp \
     python3-numpy \
-    python3-pipewire \
     pipewire \
     pipewire-bin \
     pipewire-audio-client-libraries \
@@ -76,7 +75,8 @@ apt-get install -y \
     libdbus-1-dev \
     libdbus-glib-1-dev \
     libgirepository1.0-dev \
-    gir1.2-gtk-3.0
+    gir1.2-gtk-3.0 \
+    gir1.2-pipewire-0.3
 
 # Install Python packages that aren't available in Debian
 echo "Installing Python packages..."

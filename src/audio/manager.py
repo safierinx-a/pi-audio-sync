@@ -6,11 +6,11 @@ import os
 import json
 from typing import List, Optional
 from loguru import logger
-import pipewire as pw
 import gi
 
 gi.require_version("Gst", "1.0")
-from gi.repository import GLib
+gi.require_version("Pipewire", "0.3")
+from gi.repository import GLib, Gst, Pipewire
 
 from ..models import AudioSource, DeviceState, SystemState, DeviceType
 
@@ -18,10 +18,18 @@ from ..models import AudioSource, DeviceState, SystemState, DeviceType
 class AudioManager:
     def __init__(self):
         try:
-            # Initialize PipeWire
+            # Initialize GLib and PipeWire
+            Gst.init(None)
+            Pipewire.init()
             self.loop = GLib.MainLoop()
-            self.pw = pw.Core()
-            self.pw.connect()
+
+            # Get PipeWire context
+            self.context = Pipewire.Context.new(self.loop.get_context())
+            self.context.connect()
+
+            # Get core and registry
+            self.core = self.context.get_core()
+            self.registry = self.core.get_registry()
 
             # Initialize device tracking
             self.devices = {}
@@ -36,12 +44,14 @@ class AudioManager:
         try:
             # Get audio sinks from PipeWire
             self.sinks = []
-            registry = self.pw.get_registry()
-            for obj in registry.objects:
-                if obj.type == "PipeWire:Interface:Node":
-                    props = obj.props
+
+            def registry_global(registry, object_id, type, version, props):
+                if type == "PipeWire:Interface:Node":
                     if props.get("media.class") == "Audio/Sink":
-                        self.sinks.append({"path": obj.path, "props": props})
+                        self.sinks.append({"id": object_id, "props": dict(props)})
+
+            self.registry.connect("global", registry_global)
+            self.registry.sync()
 
             logger.info(f"Found {len(self.sinks)} audio sinks")
 
@@ -76,9 +86,11 @@ class AudioManager:
             volume = max(0, min(100, volume))  # Clamp volume between 0 and 100
             if 0 <= device_id < len(self.sinks):
                 sink = self.sinks[device_id]
-                node = self.pw.get_node(sink["path"])
+                node = self.core.lookup_proxy(sink["id"])
                 if node:
-                    node.set_param("Props", {"volume": volume / 100})
+                    props = node.get_properties()
+                    props["node.volume"] = volume / 100
+                    node.set_properties(props)
                     logger.info(
                         f"Set volume to {volume}% for device {sink['props'].get('node.name')}"
                     )
@@ -93,9 +105,11 @@ class AudioManager:
         try:
             if 0 <= device_id < len(self.sinks):
                 sink = self.sinks[device_id]
-                node = self.pw.get_node(sink["path"])
+                node = self.core.lookup_proxy(sink["id"])
                 if node:
-                    node.set_param("Props", {"mute": muted})
+                    props = node.get_properties()
+                    props["node.mute"] = muted
+                    node.set_properties(props)
                     logger.info(
                         f"{'Muted' if muted else 'Unmuted'} device {sink['props'].get('node.name')}"
                     )
