@@ -590,27 +590,6 @@ class AudioManager:
             if 0 <= device_id < len(self.sinks):
                 sink = self.sinks[device_id]
 
-                # If setting volume to non-zero, make this the only active device
-                if volume > 0:
-                    # Set volume to 0 for all other devices
-                    for i, other_sink in enumerate(self.sinks):
-                        if i != device_id:
-                            subprocess.run(
-                                [
-                                    "pw-cli",
-                                    "s",
-                                    other_sink["id"],
-                                    "Props",
-                                    '{"volume": 0.0}',
-                                ],
-                                capture_output=True,
-                                text=True,
-                            )
-                            other_sink["props"]["node.volume"] = 0
-                            node_name = other_sink["props"]["node.name"]
-                            if node_name in self.device_states:
-                                self.device_states[node_name]["volume"] = 0
-
                 # Set volume for the target device
                 result = subprocess.run(
                     [
@@ -635,6 +614,9 @@ class AudioManager:
                             "muted": False,
                         }
                     logger.info(f"Set volume to {volume}% for device {node_name}")
+
+                    # Ensure audio routing is correct for sync
+                    self._ensure_audio_routing()
                     return True
             return False
         except Exception as e:
