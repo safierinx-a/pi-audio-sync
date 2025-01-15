@@ -55,6 +55,21 @@ class AudioManager:
 
                 # Set each channel's volume to 0 dB (1.0 in linear scale)
                 volumes = ",".join(["1.0"] * channels)
+
+                # Set buffer configuration for better stability
+                subprocess.run(
+                    [
+                        "pw-cli",
+                        "s",
+                        node_id,
+                        "Props",
+                        '{"audio.rate": 48000, "audio.allowed-rates": [48000], "node.latency": "256/48000", "audio.position": ["FL", "FR"]}',
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+
+                # Set volume after buffer config
                 subprocess.run(
                     [
                         "pw-cli",
@@ -66,7 +81,9 @@ class AudioManager:
                     capture_output=True,
                     text=True,
                 )
-                logger.info(f"Set driver volume to 0 dB for device {node_id}")
+                logger.info(
+                    f"Set driver volume to 0 dB and configured buffers for device {node_id}"
+                )
         except Exception as e:
             logger.error(f"Error setting driver volume: {e}")
 
