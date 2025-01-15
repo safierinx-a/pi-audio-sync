@@ -30,6 +30,52 @@ class AudioManager:
             logger.error(f"Failed to initialize audio: {e}")
             raise
 
+    def _ensure_audio_routing(self):
+        """Ensure audio sources are routed to all sinks"""
+        try:
+            # Get all audio sources (like Bluetooth input)
+            result = subprocess.run(
+                ["pw-cli", "ls", "Node"], capture_output=True, text=True
+            )
+            if result.returncode == 0:
+                lines = result.stdout.splitlines()
+                current_node_id = None
+                for i, line in enumerate(lines):
+                    line = line.strip()
+
+                    # Look for node ID
+                    if line.startswith("id"):
+                        try:
+                            current_node_id = line.split()[1].rstrip(",")
+                        except Exception:
+                            current_node_id = None
+                            continue
+
+                    # Look for audio sources
+                    elif current_node_id and "media.class = " in line:
+                        media_class = line.split("=")[1].strip().strip('"')
+                        if (
+                            "Audio/Source" in media_class
+                            or "Stream/Output/Audio" in media_class
+                        ):
+                            logger.info(f"Found audio source: {current_node_id}")
+                            # Link this source to all sinks
+                            for sink in self.sinks:
+                                try:
+                                    # Create link from source to sink
+                                    subprocess.run(
+                                        ["pw-link", current_node_id, sink["id"]],
+                                        capture_output=True,
+                                        text=True,
+                                    )
+                                    logger.info(
+                                        f"Linked source {current_node_id} to sink {sink['id']}"
+                                    )
+                                except Exception as e:
+                                    logger.error(f"Error linking source to sink: {e}")
+        except Exception as e:
+            logger.error(f"Error ensuring audio routing: {e}")
+
     def _init_audio(self):
         """Initialize audio devices"""
         try:
@@ -64,7 +110,6 @@ class AudioManager:
                         )
 
                         # Only process Audio/Sink nodes (output devices)
-                        # Skip Audio/Source nodes (like iPhone playing music)
                         if "Audio/Sink" in media_class:
                             try:
                                 logger.debug(f"Processing audio sink {current_node_id}")
@@ -163,12 +208,6 @@ class AudioManager:
                                             text=True,
                                         )
 
-                                    # Ensure the device is linked (active)
-                                    subprocess.run(
-                                        ["pw-cli", "l", current_node_id],
-                                        capture_output=True,
-                                        text=True,
-                                    )
                             except Exception as e:
                                 logger.error(f"Error processing node: {e}")
                                 continue
@@ -178,6 +217,9 @@ class AudioManager:
                 logger.info(
                     f"  - {sink['props']['node.description']} ({sink['props']['node.name']})"
                 )
+
+            # Ensure audio routing is set up
+            self._ensure_audio_routing()
 
         except Exception as e:
             logger.error(f"Error initializing audio: {e}")
