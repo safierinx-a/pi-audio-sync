@@ -215,3 +215,17 @@ async def set_default_device(device_id: int):
     if not get_audio_manager().set_default_device(device_id):
         raise HTTPException(status_code=404, detail="Device not found")
     return {"status": "ok"}
+
+
+@router.get("/sources")
+async def get_sources():
+    """Get list of available audio sources"""
+    return _audio_manager.get_sources()
+
+
+@router.post("/sources/{source_id}/route")
+async def set_source_routing(source_id: int, sink_names: List[str]):
+    """Set which outputs a source should play through"""
+    if _audio_manager.set_source_routing(source_id, sink_names):
+        return {"status": "ok"}
+    raise HTTPException(status_code=404, detail="Source not found")

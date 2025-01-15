@@ -5,7 +5,7 @@ Audio Manager for Pi Audio Sync
 import os
 import json
 import subprocess
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Set
 from loguru import logger
 
 from ..models import DeviceState, SystemState, DeviceType
@@ -24,6 +24,8 @@ class AudioManager:
             # Initialize device tracking
             self.devices = {}
             self.device_states = {}  # Track volume/mute states per device
+            self.sources = {}  # Track audio sources
+            self.routing = {}  # Track source -> sink mappings
             self._init_audio()
             logger.info("Audio manager initialized successfully")
         except Exception as e:
@@ -68,10 +70,10 @@ class AudioManager:
         except Exception as e:
             logger.error(f"Error setting driver volume: {e}")
 
-    def _ensure_audio_routing(self):
-        """Ensure audio sources are routed to all sinks"""
+    def _find_sources(self) -> List[Dict]:
+        """Find all audio sources"""
+        sources = []
         try:
-            # Get all audio sources (like Bluetooth input)
             result = subprocess.run(
                 ["pw-cli", "ls", "Node"], capture_output=True, text=True
             )
@@ -96,21 +98,95 @@ class AudioManager:
                             "Audio/Source" in media_class
                             or "Stream/Output/Audio" in media_class
                         ):
-                            logger.info(f"Found audio source: {current_node_id}")
-                            # Link this source to all sinks
-                            for sink in self.sinks:
-                                try:
-                                    # Create link from source to sink
-                                    subprocess.run(
-                                        ["pw-link", current_node_id, sink["id"]],
-                                        capture_output=True,
-                                        text=True,
-                                    )
-                                    logger.info(
-                                        f"Linked source {current_node_id} to sink {sink['id']}"
-                                    )
-                                except Exception as e:
-                                    logger.error(f"Error linking source to sink: {e}")
+                            # Get detailed info about the source
+                            info = subprocess.run(
+                                ["pw-cli", "info", current_node_id],
+                                capture_output=True,
+                                text=True,
+                            )
+                            if info.returncode == 0:
+                                props = {}
+                                for prop_line in info.stdout.splitlines():
+                                    if prop_line.startswith("*") and ":" in prop_line:
+                                        key = (
+                                            prop_line.split(":", 1)[0]
+                                            .strip()
+                                            .strip("*")
+                                        )
+                                        value = prop_line.split(":", 1)[1].strip()
+                                        props[key] = value
+
+                                # Use node.name as unique identifier
+                                node_name = props.get(
+                                    "node.name", f"source_{current_node_id}"
+                                )
+                                node_desc = props.get("node.description", node_name)
+
+                                source_info = {
+                                    "id": current_node_id,
+                                    "name": node_name,
+                                    "description": node_desc,
+                                    "media_class": media_class,
+                                }
+                                sources.append(source_info)
+                                logger.info(
+                                    f"Found audio source: {node_desc} ({node_name})"
+                                )
+
+        except Exception as e:
+            logger.error(f"Error finding sources: {e}")
+
+        return sources
+
+    def _ensure_audio_routing(self):
+        """Ensure audio sources are routed according to saved mappings"""
+        try:
+            # Find current sources
+            current_sources = self._find_sources()
+            self.sources = {s["name"]: s for s in current_sources}
+
+            # Initialize routing if empty
+            if not self.routing:
+                # Default to routing all sources to all sinks
+                for source in current_sources:
+                    self.routing[source["name"]] = {
+                        sink["props"]["node.name"] for sink in self.sinks
+                    }
+
+            # Apply routing
+            for source in current_sources:
+                source_name = source["name"]
+                if source_name in self.routing:
+                    # Get target sinks for this source
+                    target_sinks = self.routing[source_name]
+
+                    # Link to each target sink
+                    for sink in self.sinks:
+                        sink_name = sink["props"]["node.name"]
+                        try:
+                            if sink_name in target_sinks:
+                                # Create link
+                                subprocess.run(
+                                    ["pw-link", source["id"], sink["id"]],
+                                    capture_output=True,
+                                    text=True,
+                                )
+                                logger.info(
+                                    f"Linked source {source['description']} to sink {sink['props']['node.description']}"
+                                )
+                            else:
+                                # Remove link if it exists
+                                subprocess.run(
+                                    ["pw-link", "-d", source["id"], sink["id"]],
+                                    capture_output=True,
+                                    text=True,
+                                )
+                                logger.info(
+                                    f"Unlinked source {source['description']} from sink {sink['props']['node.description']}"
+                                )
+                        except Exception as e:
+                            logger.error(f"Error managing link: {e}")
+
         except Exception as e:
             logger.error(f"Error ensuring audio routing: {e}")
 
@@ -505,3 +581,32 @@ class AudioManager:
     def get_system_state(self) -> SystemState:
         """Get current system state"""
         return SystemState(devices=self.get_devices())
+
+    def get_sources(self) -> List[Dict]:
+        """Get list of available audio sources"""
+        sources = self._find_sources()
+        return [
+            {
+                "id": i,
+                "name": source["name"],
+                "description": source["description"],
+                "outputs": list(self.routing.get(source["name"], set())),
+            }
+            for i, source in enumerate(sources)
+        ]
+
+    def set_source_routing(self, source_id: int, sink_names: List[str]) -> bool:
+        """Set which sinks a source should output to"""
+        try:
+            sources = self._find_sources()
+            if 0 <= source_id < len(sources):
+                source = sources[source_id]
+                # Update routing
+                self.routing[source["name"]] = set(sink_names)
+                # Apply new routing
+                self._ensure_audio_routing()
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Error setting source routing: {e}")
+            return False
