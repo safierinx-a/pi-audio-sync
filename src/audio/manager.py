@@ -30,6 +30,44 @@ class AudioManager:
             logger.error(f"Failed to initialize audio: {e}")
             raise
 
+    def _set_driver_volume(self, node_id: str):
+        """Set driver/hardware volume to 0 dB for best signal quality"""
+        try:
+            # First get the current channel map to know how many channels to set
+            info = subprocess.run(
+                ["pw-cli", "info", node_id],
+                capture_output=True,
+                text=True,
+            )
+
+            if info.returncode == 0:
+                # Look for audio.channels in the output
+                channels = 2  # Default to stereo
+                for line in info.stdout.splitlines():
+                    if "audio.channels" in line and ":" in line:
+                        try:
+                            channels = int(line.split(":", 1)[1].strip())
+                            break
+                        except (ValueError, IndexError):
+                            pass
+
+                # Set each channel's volume to 0 dB (1.0 in linear scale)
+                volumes = ",".join(["1.0"] * channels)
+                subprocess.run(
+                    [
+                        "pw-cli",
+                        "s",
+                        node_id,
+                        "Props",
+                        f'{{"channelVolumes": [{volumes}]}}',
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+                logger.info(f"Set driver volume to 0 dB for device {node_id}")
+        except Exception as e:
+            logger.error(f"Error setting driver volume: {e}")
+
     def _ensure_audio_routing(self):
         """Ensure audio sources are routed to all sinks"""
         try:
@@ -160,6 +198,9 @@ class AudioManager:
                                         f"Found sink device: {node_desc} ({node_name})"
                                     )
 
+                                    # Set driver volume to 0 dB
+                                    self._set_driver_volume(current_node_id)
+
                                     # Restore previous state or use safe defaults
                                     if node_name in self.device_states:
                                         saved_state = self.device_states[node_name]
@@ -238,6 +279,9 @@ class AudioManager:
             for sink in self.sinks:
                 node_name = sink["props"]["node.name"]
                 if node_name in current_states:
+                    # Set driver volume to 0 dB first
+                    self._set_driver_volume(sink["id"])
+
                     # Restore volume
                     try:
                         volume = current_states[node_name]["volume"]
@@ -274,7 +318,10 @@ class AudioManager:
                     except Exception as e:
                         logger.error(f"Error restoring mute state for {node_name}: {e}")
                 else:
-                    # New device - set safe initial volume
+                    # New device - set driver volume to 0 dB first
+                    self._set_driver_volume(sink["id"])
+
+                    # Then set safe initial volume
                     try:
                         subprocess.run(
                             ["pw-cli", "s", sink["id"], "Props", '{"volume": 0.05}'],
