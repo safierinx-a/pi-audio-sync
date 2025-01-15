@@ -230,39 +230,39 @@ class AudioManager:
                         {sink["props"]["node.name"] for sink in self.sinks}
                     )
 
-            # Apply routing
+            # First, unlink all existing connections to start fresh
+            subprocess.run(["pw-link", "-d", "all"], capture_output=True, text=True)
+
+            # Create a stream for each source
             for source in current_sources:
                 source_name = source["name"]
                 if source_name in self.routing:
-                    # Get target sinks for this source
                     target_sinks = self.routing[source_name]
 
-                    # Link to each target sink
-                    for sink in self.sinks:
-                        sink_name = sink["props"]["node.name"]
-                        try:
+                    # Only proceed if we have sinks to route to
+                    if target_sinks:
+                        # Create links with proper buffer settings
+                        for sink in self.sinks:
+                            sink_name = sink["props"]["node.name"]
                             if sink_name in target_sinks:
-                                # Create link
-                                subprocess.run(
-                                    ["pw-link", source["id"], sink["id"]],
-                                    capture_output=True,
-                                    text=True,
-                                )
-                                logger.info(
-                                    f"Linked source {source['description']} to sink {sink['props']['node.description']}"
-                                )
-                            else:
-                                # Remove link if it exists
-                                subprocess.run(
-                                    ["pw-link", "-d", source["id"], sink["id"]],
-                                    capture_output=True,
-                                    text=True,
-                                )
-                                logger.info(
-                                    f"Unlinked source {source['description']} from sink {sink['props']['node.description']}"
-                                )
-                        except Exception as e:
-                            logger.error(f"Error managing link: {e}")
+                                try:
+                                    # Set up the link with explicit buffer settings
+                                    subprocess.run(
+                                        [
+                                            "pw-link",
+                                            "--props",
+                                            '{"link.passive": true, "audio.rate": 48000, "audio.channels": 2}',
+                                            source["id"],
+                                            sink["id"],
+                                        ],
+                                        capture_output=True,
+                                        text=True,
+                                    )
+                                    logger.info(
+                                        f"Created synchronized link from {source['description']} to {sink['props']['node.description']}"
+                                    )
+                                except Exception as e:
+                                    logger.error(f"Error creating link: {e}")
 
         except Exception as e:
             logger.error(f"Error ensuring audio routing: {e}")
@@ -449,8 +449,31 @@ class AudioManager:
                     f"  - {sink['props']['node.description']} ({sink['props']['node.name']})"
                 )
 
-            # Create combined sink for synchronized playback
-            self._create_combined_sink()
+            # Configure global PipeWire settings for better sync
+            subprocess.run(
+                [
+                    "pw-metadata",
+                    "-n",
+                    "settings",
+                    "0",
+                    "clock.force-rate",
+                    "48000",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            subprocess.run(
+                [
+                    "pw-metadata",
+                    "-n",
+                    "settings",
+                    "0",
+                    "clock.force-quantum",
+                    "1024",
+                ],
+                capture_output=True,
+                text=True,
+            )
 
             # Ensure audio routing is set up
             self._ensure_audio_routing()
