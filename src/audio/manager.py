@@ -267,6 +267,43 @@ class AudioManager:
         except Exception as e:
             logger.error(f"Error ensuring audio routing: {e}")
 
+    def _create_combined_sink(self):
+        """Create a combined sink for synchronized playback"""
+        try:
+            # First, unload any existing combined module
+            subprocess.run(
+                [
+                    "pw-cli",
+                    "destroy",
+                    "all",
+                    "PipeWire:Interface:Module",
+                    "libpipewire-module-combine-stream",
+                ],
+                capture_output=True,
+                text=True,
+            )
+
+            # Get the sink IDs
+            sink_ids = [sink["id"] for sink in self.sinks]
+            if len(sink_ids) < 2:
+                return
+
+            # Create a combined sink
+            sink_list = ",".join(sink_ids)
+            subprocess.run(
+                [
+                    "pw-cli",
+                    "create-module",
+                    "libpipewire-module-combine-stream",
+                    f'{{"combine.mode": "sink", "combine.props": {{"audio.position": ["FL", "FR"]}}, "stream.props": {{"audio.rate": 48000, "node.latency": "1024/48000", "node.pause-on-idle": false}}, "stream.rules": [{{"matches": [{{"node.name": "~.*"}}], "actions": {{"create-stream": {{"audio.rate": 48000, "node.latency": "1024/48000", "node.pause-on-idle": false}}}}}}], "capture.props": {{"audio.rate": 48000, "node.latency": "1024/48000", "node.pause-on-idle": false}}, "sink.ids": [{sink_list}]}}',
+                ],
+                capture_output=True,
+                text=True,
+            )
+            logger.info("Created combined sink for synchronized playback")
+        except Exception as e:
+            logger.error(f"Error creating combined sink: {e}")
+
     def _init_audio(self):
         """Initialize audio devices"""
         try:
@@ -412,6 +449,9 @@ class AudioManager:
                     f"  - {sink['props']['node.description']} ({sink['props']['node.name']})"
                 )
 
+            # Create combined sink for synchronized playback
+            self._create_combined_sink()
+
             # Ensure audio routing is set up
             self._ensure_audio_routing()
 
@@ -426,7 +466,7 @@ class AudioManager:
             current_sinks = {sink["props"]["node.name"]: sink for sink in self.sinks}
 
             # Reinitialize devices
-            self._init_audio()
+            self._init_audio()  # This will also recreate the combined sink
 
             # Restore states for existing devices
             for sink in self.sinks:
