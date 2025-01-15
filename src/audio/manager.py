@@ -45,29 +45,86 @@ class AudioManager:
             if info.returncode == 0:
                 # Look for audio.channels in the output
                 channels = 2  # Default to stereo
+                is_pro_audio = False
+                device_name = ""
+
                 for line in info.stdout.splitlines():
                     if "audio.channels" in line and ":" in line:
                         try:
                             channels = int(line.split(":", 1)[1].strip())
-                            break
                         except (ValueError, IndexError):
                             pass
+                    # Check if it's a professional audio device
+                    elif "node.name" in line:
+                        device_name = line.split(":", 1)[1].strip().lower()
+                        if any(
+                            x in device_name
+                            for x in ["thump", "mackie", "pro", "yamaha", "alsa"]
+                        ):
+                            is_pro_audio = True
+                    elif "api.alsa" in line or "device.api" in line:
+                        is_pro_audio = True
 
                 # Set each channel's volume to 0 dB (1.0 in linear scale)
                 volumes = ",".join(["1.0"] * channels)
 
-                # Set buffer configuration for better stability
-                subprocess.run(
+                # Configure buffers based on device type
+                if is_pro_audio:
+                    buffer_config = {
+                        "audio.rate": 48000,
+                        "audio.allowed-rates": [48000],
+                        "node.latency": "1024/48000",  # Increased latency for stability
+                        "audio.position": ["FL", "FR"],
+                        "node.pause-on-idle": False,
+                        "api.alsa.period-size": 2048,  # Larger period size
+                        "api.alsa.headroom": 16384,  # More headroom
+                        "api.alsa.disable-mmap": True,  # Disable mmap for compatibility
+                        "session.suspend-timeout-seconds": 0,  # Prevent suspend
+                    }
+                else:
+                    buffer_config = {
+                        "audio.rate": 48000,
+                        "audio.allowed-rates": [48000],
+                        "node.latency": "256/48000",
+                        "audio.position": ["FL", "FR"],
+                        "node.pause-on-idle": False,
+                        "api.alsa.period-size": 256,
+                        "api.alsa.headroom": 4096,
+                    }
+
+                # Apply buffer configuration
+                result = subprocess.run(
                     [
                         "pw-cli",
                         "s",
                         node_id,
                         "Props",
-                        '{"audio.rate": 48000, "audio.allowed-rates": [48000], "node.latency": "256/48000", "audio.position": ["FL", "FR"]}',
+                        json.dumps(buffer_config),
                     ],
                     capture_output=True,
                     text=True,
                 )
+
+                if result.returncode != 0:
+                    logger.warning(
+                        f"Failed to set buffer config for device {node_id}: {result.stderr}"
+                    )
+                    # Try with minimal config if full config fails
+                    minimal_config = {
+                        "audio.rate": 48000,
+                        "node.latency": "1024/48000" if is_pro_audio else "256/48000",
+                    }
+                    subprocess.run(
+                        [
+                            "pw-cli",
+                            "s",
+                            node_id,
+                            "Props",
+                            json.dumps(minimal_config),
+                        ],
+                        capture_output=True,
+                        text=True,
+                    )
 
                 # Set volume after buffer config
                 subprocess.run(
@@ -82,7 +139,7 @@ class AudioManager:
                     text=True,
                 )
                 logger.info(
-                    f"Set driver volume to 0 dB and configured buffers for device {node_id}"
+                    f"Set driver volume to 0 dB and configured {'pro-audio' if is_pro_audio else 'standard'} buffers for device {node_id}"
                 )
         except Exception as e:
             logger.error(f"Error setting driver volume: {e}")
@@ -527,11 +584,34 @@ class AudioManager:
     def set_volume(self, device_id: int, volume: int) -> bool:
         """Set volume for a device"""
         try:
-            volume = max(0, min(100, volume))  # Clamp volume between 0 and 100
+            if not 0 <= volume <= 100:
+                raise ValueError("Volume must be between 0 and 100")
+
             if 0 <= device_id < len(self.sinks):
                 sink = self.sinks[device_id]
 
-                # Set volume for the sink
+                # If setting volume to non-zero, make this the only active device
+                if volume > 0:
+                    # Set volume to 0 for all other devices
+                    for i, other_sink in enumerate(self.sinks):
+                        if i != device_id:
+                            subprocess.run(
+                                [
+                                    "pw-cli",
+                                    "s",
+                                    other_sink["id"],
+                                    "Props",
+                                    '{"volume": 0.0}',
+                                ],
+                                capture_output=True,
+                                text=True,
+                            )
+                            other_sink["props"]["node.volume"] = 0
+                            node_name = other_sink["props"]["node.name"]
+                            if node_name in self.device_states:
+                                self.device_states[node_name]["volume"] = 0
+
+                # Set volume for the target device
                 result = subprocess.run(
                     [
                         "pw-cli",
@@ -554,9 +634,7 @@ class AudioManager:
                             "volume": volume,
                             "muted": False,
                         }
-                    logger.info(
-                        f"Set volume to {volume}% for device {sink['props'].get('node.name')}"
-                    )
+                    logger.info(f"Set volume to {volume}% for device {node_name}")
                     return True
             return False
         except Exception as e:
