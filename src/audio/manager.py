@@ -149,9 +149,12 @@ class AudioManager:
             if not self.routing:
                 # Default to routing all sources to all sinks
                 for source in current_sources:
-                    self.routing[source["name"]] = {
-                        sink["props"]["node.name"] for sink in self.sinks
-                    }
+                    source_name = source["name"]
+                    if source_name not in self.routing:
+                        self.routing[source_name] = set()
+                    self.routing[source_name].update(
+                        {sink["props"]["node.name"] for sink in self.sinks}
+                    )
 
             # Apply routing
             for source in current_sources:
