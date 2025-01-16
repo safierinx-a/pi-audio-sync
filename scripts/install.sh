@@ -15,10 +15,79 @@ if [ -z "$SUDO_USER" ]; then
     exit 1
 fi
 
-# Check if running on Raspberry Pi OS
-if ! grep -q "Raspberry Pi" /etc/os-release; then
-    echo "This script is designed for Raspberry Pi OS"
-    echo "Current OS: $(cat /etc/os-release | grep PRETTY_NAME)"
+# Function to run commands with timeout
+run_with_timeout() {
+    local cmd="$1"
+    local timeout="$2"
+    local message="$3"
+    
+    echo "$message..."
+    timeout "$timeout" bash -c "$cmd" || {
+        echo "Command timed out after ${timeout}s: $cmd"
+        return 1
+    }
+}
+
+# Function to run commands as user
+run_as_user() {
+    local cmd="$1"
+    su - $SUDO_USER -c "$cmd"
+}
+
+# Function to check if a package is installed
+is_package_installed() {
+    dpkg -l "$1" &> /dev/null
+}
+
+# Clean up old services and state
+echo "Cleaning up old services and state..."
+run_as_user "systemctl --user stop pipewire pipewire-pulse wireplumber audio-sync 2>/dev/null || true"
+run_as_user "systemctl --user disable audio-sync 2>/dev/null || true"
+
+# Clean up old state
+rm -rf /home/$SUDO_USER/.local/state/pipewire
+rm -rf /home/$SUDO_USER/.local/state/wireplumber
+rm -f /home/$SUDO_USER/.config/systemd/user/audio-sync.service
+
+# Update package lists
+echo "Updating package lists..."
+apt-get update || {
+    echo "Failed to update package lists. Please check your internet connection."
+    exit 1
+}
+
+# Install required system packages
+echo "Installing system packages..."
+SYSTEM_PACKAGES=(
+    # Audio stack
+    pipewire
+    pipewire-audio-client-libraries
+    pipewire-pulse
+    wireplumber
+    # Bluetooth stack
+    bluetooth
+    bluez
+    # Python and dependencies
+    python3
+    python3-pip
+    python3-setuptools
+    python3-wheel
+    # System utilities
+    alsa-utils
+)
+
+# Check package availability
+MISSING_PACKAGES=()
+for pkg in "${SYSTEM_PACKAGES[@]}"; do
+    if ! apt-cache show "$pkg" &> /dev/null; then
+        MISSING_PACKAGES+=("$pkg")
+    fi
+done
+
+if [ ${#MISSING_PACKAGES[@]} -ne 0 ]; then
+    echo "Warning: The following packages are not available in the repositories:"
+    printf '%s\n' "${MISSING_PACKAGES[@]}"
+    echo "Please ensure you have the correct repositories enabled."
     read -p "Continue anyway? [y/N] " -n 1 -r
     echo
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -26,590 +95,110 @@ if ! grep -q "Raspberry Pi" /etc/os-release; then
     fi
 fi
 
-# Check for internet connectivity
-echo "Checking internet connectivity..."
-if ! ping -c 1 google.com &> /dev/null; then
-    echo "No internet connection. Please connect to the internet and try again."
-    exit 1
-fi
-
-# Create backup directory for existing configs
-BACKUP_DIR="/root/pi-audio-sync-backup-$(date +%Y%m%d-%H%M%S)"
-mkdir -p $BACKUP_DIR
-if [ -d "/etc/pipewire" ]; then
-    cp -r /etc/pipewire $BACKUP_DIR/
-fi
-if [ -d "/etc/bluetooth" ]; then
-    cp -r /etc/bluetooth $BACKUP_DIR/
-fi
-echo "Existing configurations backed up to $BACKUP_DIR"
-
-echo "Installing Pi Audio Sync..."
-
-# Create temporary directory
-TEMP_DIR=$(mktemp -d)
-echo "Created temporary directory: $TEMP_DIR"
-
-# Copy current files to temp directory
-echo "Backing up current files..."
-cp -r . $TEMP_DIR/
-
-# System diagnostics
-echo "Running system diagnostics..."
-echo "Checking audio devices..."
-aplay -l || echo "No ALSA devices found"
-echo "Checking PipeWire installation..."
-which pipewire || echo "PipeWire not found"
-which pw-cli || echo "pw-cli not found"
-which pw-dump || echo "pw-dump not found"
-
-# Clean up old installations
-echo "Cleaning up old installations..."
-systemctl --user -M $SUDO_USER@ stop audio-sync || true
-systemctl --user -M $SUDO_USER@ disable audio-sync || true
-rm -f /home/$SUDO_USER/.config/systemd/user/audio-sync.service
-rm -rf /etc/pipewire/*
-
-# Only remove contents of /opt/pi-audio-sync if it exists and is not the current directory
-if [ -d "/opt/pi-audio-sync" ] && [ "$PWD" != "/opt/pi-audio-sync" ]; then
-    echo "Cleaning up old installation directory..."
-    rm -rf /opt/pi-audio-sync/*
-fi
-
-# System Dependencies
-echo "Installing system dependencies..."
-apt-get update || {
-    echo "Failed to update package list. Check your internet connection and try again."
+# Install system packages
+echo "Installing system packages..."
+apt-get install -y "${SYSTEM_PACKAGES[@]}" || {
+    echo "Failed to install system packages. Please check the error messages above."
     exit 1
 }
 
-# Function to check if a package is available
-check_package() {
-    if ! apt-cache show $1 > /dev/null 2>&1; then
-        echo "Warning: Package $1 not found in repositories"
-        return 1
-    fi
-    return 0
+# Install Python dependencies
+echo "Installing Python dependencies..."
+python3 -m pip install --break-system-packages fastapi uvicorn python-dotenv pydantic websockets || {
+    echo "Failed to install Python dependencies. Please check the error messages above."
+    exit 1
 }
-
-# Check package availability before installing
-MISSING_PACKAGES=""
-for package in python3-fastapi python3-uvicorn python3-dotenv python3-pydantic python3-websockets; do
-    if ! check_package $package; then
-        MISSING_PACKAGES="$MISSING_PACKAGES $package"
-    fi
-done
-
-if [ ! -z "$MISSING_PACKAGES" ]; then
-    echo "The following packages are not available in the default repositories:$MISSING_PACKAGES"
-    echo "We will need to install these via pip instead"
-    USE_PIP=1
-else
-    USE_PIP=0
-fi
 
 # Ensure user is in required groups
 echo "Setting up user permissions..."
 usermod -a -G audio,bluetooth,pulse,pulse-access $SUDO_USER
 
-# Configure Bluetooth
-echo "Configuring Bluetooth..."
-# Stop bluetooth to modify settings
-systemctl stop bluetooth
-
-# Configure Bluetooth settings
-echo "Setting up Bluetooth configuration..."
-cat > /etc/bluetooth/main.conf << EOF
-[General]
-Name = Pi Audio Receiver
-Class = 0x240404
-DiscoverableTimeout = 0
-PairableTimeout = 0
-Privacy = 0
-Experimental = true
-FastConnectable = true
-JustWorksRepairing = always
-MultiProfile = multiple
-AutoEnable = true
-
-[Policy]
-AutoEnable = true
-ReconnectAttempts = 3
-ReconnectIntervals = 1,2,4
-
-[GATT]
-KeySize = 0x10
-ExchangeMTU = 517
-EOF
-
-# Set up Bluetooth adapter
-echo "Setting up Bluetooth adapter..."
-if ! hciconfig hci0 up; then
-    echo "Error enabling Bluetooth adapter"
-    exit 1
-fi
-
-# Make adapter discoverable and pairable
-echo "Making Bluetooth adapter discoverable..."
-hciconfig hci0 piscan
-hciconfig hci0 sspmode 1
-hciconfig hci0 class 0x240404
-
-# Create PipeWire config directories
-echo "Setting up PipeWire configuration..."
-mkdir -p /etc/pipewire
+# Create necessary directories
+echo "Creating configuration directories..."
 mkdir -p /etc/pipewire/pipewire.conf.d
 mkdir -p /home/$SUDO_USER/.config/systemd/user
-mkdir -p /home/$SUDO_USER/.config/pipewire
-
-# Copy configurations from temp directory
-echo "Copying configuration files..."
-cp -r $TEMP_DIR/config/pipewire/* /etc/pipewire/
-cp -r $TEMP_DIR/config/bluetooth/* /etc/bluetooth/
-
-# Configure main PipeWire settings
-echo "Configuring main PipeWire settings..."
-cat << 'EOF' | tee /etc/pipewire/pipewire.conf
-context.properties = {
-    link.max-buffers = 16
-    core.daemon = true
-    core.name = pipewire-0
-    mem.allow-mlock = true
-    support.dbus = true
-    log.level = 2
-}
-
-context.spa-libs = {
-    audio.convert.* = audioconvert/libspa-audioconvert
-    api.alsa.* = alsa/libspa-alsa
-    api.v4l2.* = v4l2/libspa-v4l2
-    api.bluez5.* = bluez5/libspa-bluez5
-    support.* = support/libspa-support
-}
-
-context.modules = [
-    # Core
-    { name = libpipewire-module-protocol-native }
-    { name = libpipewire-module-client-node }
-    { name = libpipewire-module-client-device }
-    
-    # Config
-    { name = libpipewire-module-metadata }
-    { name = libpipewire-module-spa-device-factory }
-    { name = libpipewire-module-spa-node-factory }
-    { name = libpipewire-module-adapter }
-    
-    # Session manager interface
-    { name = libpipewire-module-session-manager }
-]
-
-context.objects = [
-    { factory = spa-node-factory args = { factory.name = support.node.driver node.name = Dummy-Driver } }
-]
-
-context.exec = [
-    { path = "/usr/bin/wireplumber" args = "" }
-]
-EOF
-
-# Configure PipeWire Pulse settings
-echo "Configuring PipeWire Pulse settings..."
-cat << 'EOF' | tee /etc/pipewire/pipewire-pulse.conf
-context.properties = {
-    log.level = 2
-}
-
-context.modules = [
-    { name = libpipewire-module-rt
-        args = {
-            nice.level = -11
-            rt.prio = 88
-            rt.time.soft = 200000
-            rt.time.hard = 200000
-        }
-        flags = [ ifexists nofail ]
-    }
-    { name = libpipewire-module-protocol-native }
-    { name = libpipewire-module-client-node }
-    { name = libpipewire-module-adapter }
-    { name = libpipewire-module-metadata }
-    { name = libpipewire-module-protocol-pulse
-        args = {
-            server.address = [ "unix:native" ]
-            pulse.min.req = 1024/48000
-            pulse.default.req = 1024/48000
-            pulse.min.frag = 1024/48000
-            pulse.default.frag = 1024/48000
-            pulse.default.tlength = 1024/48000
-            pulse.min.quantum = 1024/48000
-        }
-    }
-]
-
-stream.properties = {
-    node.latency = 1024/48000
-    resample.quality = 4
-    channelmix.normalize = false
-    channelmix.mix-lfe = false
-    session.suspend-timeout-seconds = 0
-}
-EOF
-
-# Configure PipeWire Bluetooth
-echo "Configuring PipeWire Bluetooth..."
-cat << 'EOF' | tee /etc/pipewire/pipewire.conf.d/99-bluetooth.conf
-context.modules = [
-    {
-        name = libpipewire-module-bluetooth
-        args = {
-            bluez5.enable-sbc-xq = true
-            bluez5.enable-msbc = true
-            bluez5.enable-hw-volume = true
-            bluez5.headset-roles = [ a2dp_sink ]
-            bluez5.codecs = [ sbc_xq sbc aac ]
-            bluez5.hfphsp-backend = native
-            bluez5.msbc-support = true
-            bluez5.keep-profile = true
-        }
-        flags = [ ifexists nofail ]
-    }
-]
-EOF
-
-# Create a minimal WirePlumber config
-echo "Configuring WirePlumber..."
-mkdir -p /etc/wireplumber/main.lua.d
-cat << 'EOF' | tee /etc/wireplumber/main.lua.d/51-alsa-disable.lua
-rule = {
-  matches = {
-    {
-      { "device.name", "matches", "alsa_card.*" },
-    },
-  },
-  apply_properties = {
-    ["device.disabled"] = false,
-  },
-}
-
-table.insert(alsa_monitor.rules,rule)
-EOF
-
-# Install Python packages from apt
-echo "Installing Python packages..."
-apt-get install -y \
-    python3-fastapi \
-    python3-uvicorn \
-    python3-dotenv \
-    python3-pydantic \
-    python3-websockets
-
-# Install PipeWire packages
-echo "Installing PipeWire packages..."
-apt-get install -y pipewire pipewire-audio-client-libraries \
-    pipewire-pulse libspa-0.2-modules libspa-0.2-bluetooth \
-    wireplumber
-
-# Enable required services
-echo "Enabling system services..."
-systemctl --system enable bluetooth
-systemctl --system start bluetooth
-
-# Verify PipeWire configuration
-echo "Verifying PipeWire configuration..."
-if [ ! -f /etc/pipewire/pipewire.conf ]; then
-    echo "Error: PipeWire configuration not found"
-    exit 1
-fi
+mkdir -p /var/log/pi-audio-sync
+chown -R $SUDO_USER:$SUDO_USER /var/log/pi-audio-sync
 
 # Install application
 echo "Installing application..."
 mkdir -p /opt/pi-audio-sync
-cp -r $TEMP_DIR/src /opt/pi-audio-sync/
-cp -r $TEMP_DIR/config /opt/pi-audio-sync/
+cp -r src /opt/pi-audio-sync/
+cp -r config /opt/pi-audio-sync/
+cp requirements.txt /opt/pi-audio-sync/
 chown -R $SUDO_USER:$SUDO_USER /opt/pi-audio-sync
 
-# Install service
-echo "Installing service..."
-cp $TEMP_DIR/config/systemd/audio-sync.service /home/$SUDO_USER/.config/systemd/user/
+# Copy configurations
+echo "Copying configuration files..."
+cp -r config/pipewire/* /etc/pipewire/
+cp -r config/systemd/* /home/$SUDO_USER/.config/systemd/user/
 chown -R $SUDO_USER:$SUDO_USER /home/$SUDO_USER/.config
 
-# Create log directory
-echo "Setting up logging..."
-mkdir -p /var/log/pi-audio-sync
-chown -R $SUDO_USER:$SUDO_USER /var/log/pi-audio-sync
+# Configure Bluetooth
+echo "Configuring Bluetooth..."
+systemctl stop bluetooth
+cp config/bluetooth/main.conf /etc/bluetooth/
+systemctl start bluetooth
 
-# Initialize PipeWire
-echo "Initializing PipeWire..."
-
-# Function to run systemd commands as user
-run_as_user() {
-    local cmd="$1"
-    # Use su to run commands as the user with proper environment
-    su - $SUDO_USER -c "export XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) && $cmd"
-}
-
-# Function to run command with timeout
-run_with_timeout() {
-    local cmd="$1"
-    local timeout="$2"
-    
-    # Run command with timeout
-    timeout "$timeout" bash -c "$cmd" || {
-        echo "Command timed out after ${timeout} seconds: $cmd"
-        return 1
-    }
-}
-
-# Function to start and verify service
-start_and_verify_service() {
-    local service=$1
-    echo "Starting $service..."
-    
-    # Try to start the service
-    if ! run_as_user "systemctl --user start $service"; then
-        echo "Warning: Failed to start $service"
-        return 1
-    fi
-    
-    # Wait for service to settle
-    sleep 3
-    
-    # Check service status
-    if ! run_as_user "systemctl --user --no-pager status $service"; then
-        echo "Warning: $service failed to start properly"
-        echo "Service logs:"
-        run_as_user "journalctl --user -u $service --no-pager -n 50"
-        return 1
-    fi
-    return 0
-}
-
-# Stop all existing audio services
-echo "Stopping existing audio services..."
-run_as_user "systemctl --user stop pipewire-pulse.{service,socket} pipewire.{service,socket} wireplumber.service audio-sync" || true
-
-# Clear any existing PipeWire state
-echo "Clearing PipeWire state..."
-rm -rf /run/user/$(id -u $SUDO_USER)/pipewire-* || true
-rm -rf /home/$SUDO_USER/.local/state/pipewire/* || true
-rm -rf /home/$SUDO_USER/.config/pipewire/media-session.d/* || true
-
-# Ensure runtime directory exists and has correct permissions
+# Ensure runtime directory exists with correct permissions
 echo "Setting up runtime directory..."
 mkdir -p /run/user/$(id -u $SUDO_USER)
 chown $SUDO_USER:$SUDO_USER /run/user/$(id -u $SUDO_USER)
 chmod 700 /run/user/$(id -u $SUDO_USER)
 
-# Reload systemd daemon
-echo "Reloading systemd daemon..."
+# Reload systemd user daemon
+echo "Reloading systemd user daemon..."
 run_as_user "systemctl --user daemon-reload"
 
-# Start services in correct order with proper delays
-echo "Starting PipeWire stack..."
-
-# Enable sockets first
-echo "Enabling PipeWire sockets..."
-run_as_user "systemctl --user enable pipewire.socket pipewire-pulse.socket"
-run_as_user "systemctl --user start pipewire.socket pipewire-pulse.socket"
+# Start PipeWire stack in correct order
+echo "Starting audio services..."
+run_as_user "systemctl --user enable --now pipewire.socket"
+sleep 2
+run_as_user "systemctl --user enable --now pipewire.service"
+sleep 2
+run_as_user "systemctl --user enable --now wireplumber.service"
+sleep 2
+run_as_user "systemctl --user enable --now pipewire-pulse.socket"
+sleep 2
+run_as_user "systemctl --user enable --now pipewire-pulse.service"
 sleep 2
 
-# Now start services
-start_and_verify_service pipewire
-sleep 2
-
-# Verify PipeWire is running before starting WirePlumber
-if run_as_user "pw-cli info 0" > /dev/null 2>&1; then
-    echo "PipeWire is running, starting WirePlumber..."
-    start_and_verify_service wireplumber
-    sleep 2
-    start_and_verify_service pipewire-pulse
-else
-    echo "Error: PipeWire is not running properly, cannot start WirePlumber"
-    # Show PipeWire logs
+# Verify PipeWire is running
+echo "Verifying PipeWire setup..."
+if ! run_with_timeout "run_as_user 'pw-cli info 0'" 5 "Checking PipeWire core"; then
+    echo "Error: PipeWire core not responding"
     echo "PipeWire logs:"
-    run_as_user "journalctl --user -u pipewire --no-pager -n 50"
+    run_as_user "journalctl --user -u pipewire -n 50"
+    exit 1
 fi
 
-# Debug: Check PipeWire socket and processes
-echo "Debug: Checking PipeWire socket..."
-ls -l /run/user/$(id -u $SUDO_USER)/pipewire-0 || echo "PipeWire socket not found"
-
-echo "Debug: Checking PipeWire processes..."
-ps aux | grep pipewire
-
-# Wait for PipeWire to initialize with timeout
-echo "Waiting for PipeWire to initialize..."
-for i in {1..5}; do
-    if run_with_timeout "run_as_user 'pw-cli info 0'" "5"; then
-        echo "PipeWire initialized successfully"
-        break
-    fi
-    echo "Attempt $i: Waiting for PipeWire to initialize..."
-    sleep 2
-done
-
-# Check for audio nodes with timeout
+# Verify audio nodes are present
 echo "Checking for audio nodes..."
-echo "Debug: Full PipeWire dump:"
-run_with_timeout "run_as_user 'pw-dump'" "5" || true
-
-echo "Debug: Looking for audio sinks..."
-if ! run_with_timeout "run_as_user 'pw-dump'" "5" | grep -q "Audio/Sink"; then
-    echo "Warning: No audio sinks found. Checking system state:"
+if ! run_with_timeout "run_as_user 'pw-dump'" 5 "Checking audio nodes" | grep -q "Audio/"; then
+    echo "Warning: No audio nodes found. System state:"
     echo "1. ALSA devices:"
     aplay -l
-    echo "2. PipeWire modules:"
-    run_with_timeout "run_as_user 'pw-cli list-objects'" "5" | grep module || true
-    echo "3. Active PipeWire nodes:"
-    run_with_timeout "run_as_user 'pw-cli list-objects'" "5" | grep node || true
-    echo "4. PipeWire service status:"
-    run_as_user "systemctl --user --no-pager status pipewire" || true
+    echo "2. PipeWire nodes:"
+    run_as_user "pw-cli list-objects | grep node"
+    echo "3. Service status:"
+    run_as_user "systemctl --user status pipewire pipewire-pulse wireplumber"
 fi
 
-# Check audio-sync service configuration
-echo "Checking audio-sync service configuration..."
-cat /home/$SUDO_USER/.config/systemd/user/audio-sync.service
+# Start audio-sync service
+echo "Starting audio-sync service..."
+run_as_user "systemctl --user enable --now audio-sync.service"
 
-# Verify Python environment
-echo "Verifying Python environment..."
-run_as_user "python3 -c 'import fastapi, uvicorn, dotenv, pydantic, websockets'" || {
-    echo "Error: Missing Python dependencies"
+# Verify service is running
+echo "Verifying audio-sync service..."
+if ! run_with_timeout "run_as_user 'systemctl --user status audio-sync'" 5 "Checking audio-sync service"; then
+    echo "Error: audio-sync service failed to start"
+    echo "Service logs:"
+    run_as_user "journalctl --user -u audio-sync -n 50"
     exit 1
-}
-
-# Check service status with better error handling
-check_service() {
-    local service=$1
-    echo "Checking $service..."
-    if ! run_with_timeout "run_as_user 'systemctl --user --no-pager status $service'" "5" > /dev/null 2>&1; then
-        FAILED_SERVICES="$FAILED_SERVICES $service"
-        echo "Service $service failed. Last logs:"
-        run_as_user "systemctl --user --no-pager status $service" || true
-        run_as_user "journalctl --user -u $service --no-pager -n 20" || true
-        
-        # For audio-sync specifically, check if the service file exists and is valid
-        if [ "$service" = "audio-sync" ]; then
-            echo "Checking audio-sync service configuration..."
-            cat /home/$SUDO_USER/.config/systemd/user/audio-sync.service
-            echo "Checking if Python application exists..."
-            ls -l /opt/pi-audio-sync/src/main.py || echo "main.py not found!"
-        fi
-    fi
-}
-
-# Final status check
-echo "Performing final status check..."
-FAILED_SERVICES=""
-
-check_service pipewire
-check_service pipewire-pulse
-check_service wireplumber
-check_service audio-sync
-
-if [ ! -z "$FAILED_SERVICES" ]; then
-    echo "Warning: The following services failed to start:$FAILED_SERVICES"
-    echo "You may need to investigate these services after reboot"
 fi
 
-# Clean up temp directory
-echo "Cleaning up temporary files..."
-rm -rf $TEMP_DIR
-
-echo "Installation complete!"
-echo "A backup of your original configuration has been saved to $BACKUP_DIR"
-if [ ! -z "$FAILED_SERVICES" ]; then
-    echo "Note: Some services failed to start. Please check the logs after reboot."
-fi
-
-echo "Would you like to reboot now? (recommended)"
-read -p "Reboot now? [y/N] " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    echo "Rebooting in 5 seconds... Press Ctrl+C to cancel"
-    sleep 5
-    reboot
-else
-    echo "Please reboot your system manually to ensure all changes take effect."
-    echo "After reboot, check service status with: systemctl --user status audio-sync"
-    echo "Check PipeWire status with: pw-cli info 0"
-    echo "Check audio devices with: pw-dump | grep Audio/Sink"
-fi 
-
-# Function to run command with timeout
-run_with_timeout() {
-    local cmd="$1"
-    local timeout="$2"
-    
-    # Run command with timeout
-    timeout "$timeout" bash -c "$cmd" || {
-        echo "Command timed out after ${timeout} seconds: $cmd"
-        return 1
-    }
-}
-
-# Debug: Check PipeWire socket and processes
-echo "Debug: Checking PipeWire socket..."
-ls -l /run/user/$(id -u $SUDO_USER)/pipewire-0 || echo "PipeWire socket not found"
-
-echo "Debug: Checking PipeWire processes..."
-ps aux | grep pipewire
-
-# Wait for PipeWire to initialize with timeout
-echo "Waiting for PipeWire to initialize..."
-for i in {1..5}; do
-    if run_with_timeout "run_as_user 'pw-cli info 0'" "5"; then
-        echo "PipeWire initialized successfully"
-        break
-    fi
-    echo "Attempt $i: Waiting for PipeWire to initialize..."
-    sleep 2
-done
-
-# Check for audio nodes with timeout
-echo "Checking for audio nodes..."
-echo "Debug: Full PipeWire dump:"
-run_with_timeout "run_as_user 'pw-dump'" "5" || true
-
-echo "Debug: Looking for audio sinks..."
-if ! run_with_timeout "run_as_user 'pw-dump'" "5" | grep -q "Audio/Sink"; then
-    echo "Warning: No audio sinks found. Checking system state:"
-    echo "1. ALSA devices:"
-    aplay -l
-    echo "2. PipeWire modules:"
-    run_with_timeout "run_as_user 'pw-cli list-objects'" "5" | grep module || true
-    echo "3. Active PipeWire nodes:"
-    run_with_timeout "run_as_user 'pw-cli list-objects'" "5" | grep node || true
-    echo "4. PipeWire service status:"
-    run_as_user "systemctl --user --no-pager status pipewire" || true
-fi
-
-# Check audio-sync service configuration
-echo "Checking audio-sync service configuration..."
-cat /home/$SUDO_USER/.config/systemd/user/audio-sync.service
-
-# Verify Python environment
-echo "Verifying Python environment..."
-run_as_user "python3 -c 'import fastapi, uvicorn, dotenv, pydantic, websockets'" || {
-    echo "Error: Missing Python dependencies"
-    exit 1
-}
-
-# Check service status with better error handling
-check_service() {
-    local service=$1
-    echo "Checking $service..."
-    if ! run_with_timeout "run_as_user 'systemctl --user --no-pager status $service'" "5" > /dev/null 2>&1; then
-        FAILED_SERVICES="$FAILED_SERVICES $service"
-        echo "Service $service failed. Last logs:"
-        run_as_user "systemctl --user --no-pager status $service" || true
-        run_as_user "journalctl --user -u $service --no-pager -n 20" || true
-        
-        # For audio-sync specifically, check if the service file exists and is valid
-        if [ "$service" = "audio-sync" ]; then
-            echo "Checking audio-sync service configuration..."
-            cat /home/$SUDO_USER/.config/systemd/user/audio-sync.service
-            echo "Checking if Python application exists..."
-            ls -l /opt/pi-audio-sync/src/main.py || echo "main.py not found!"
-        fi
-    fi
-} 
+echo "Installation completed successfully!"
+echo "You can check the service status with: systemctl --user status audio-sync"
+echo "View logs with: journalctl --user -u audio-sync -f"
+echo "View PipeWire status with: pw-cli info 0"
+echo "List audio devices with: pw-dump | grep Audio/" 
