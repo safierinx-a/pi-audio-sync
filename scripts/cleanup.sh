@@ -1,5 +1,18 @@
 #!/bin/bash
 
+if [ "$EUID" -eq 0 ]; then
+    # Get the actual user who invoked sudo
+    ACTUAL_USER=$SUDO_USER
+    if [ -z "$ACTUAL_USER" ]; then
+        echo "Error: Could not determine the actual user"
+        exit 1
+    fi
+    
+    # Re-run this script as the actual user
+    exec su - "$ACTUAL_USER" -c "bash $(realpath $0)"
+    exit 0
+fi
+
 echo "This script will clean up PipeWire state and configuration."
 echo "Your system audio will be temporarily disrupted."
 read -p "Press Enter to continue or Ctrl+C to cancel..."
