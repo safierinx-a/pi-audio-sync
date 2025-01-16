@@ -8,9 +8,15 @@ User=vo603-rpi-1
 Environment=PYTHONPATH=/opt/pi-audio-sync
 Environment=XDG_RUNTIME_DIR=/run/user/1000
 Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+Environment=PYTHONUNBUFFERED=1
+Environment=LOG_LEVEL=DEBUG
+Environment=HOST=0.0.0.0
+Environment=PORT=8000
 ExecStartPre=/bin/sh -c 'until pgrep -x pipewire >/dev/null; do sleep 1; done'
 ExecStart=/usr/bin/python3 -u -m src.main
 WorkingDirectory=/opt/pi-audio-sync
+StandardOutput=journal
+StandardError=journal
 Restart=on-failure
 RestartSec=5s
 
