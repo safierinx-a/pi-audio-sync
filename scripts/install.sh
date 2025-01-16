@@ -344,31 +344,12 @@ echo "Initializing PipeWire..."
 # Ensure systemd user instance is running
 loginctl enable-linger $SUDO_USER
 
-# Stop all existing audio services
-echo "Stopping existing audio services..."
-sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user stop pipewire-pulse.{service,socket} pipewire.{service,socket} wireplumber.service audio-sync || true
-systemctl --user -M $SUDO_USER@ stop pipewire-pulse.{service,socket} pipewire.{service,socket} wireplumber.service audio-sync || true
-
-# Clear any existing PipeWire state
-echo "Clearing PipeWire state..."
-rm -rf /run/user/$(id -u $SUDO_USER)/pipewire-* || true
-rm -rf /home/$SUDO_USER/.local/state/pipewire/* || true
-rm -rf /home/$SUDO_USER/.config/pipewire/media-session.d/* || true
-
-# Ensure runtime directory exists and has correct permissions
-echo "Setting up runtime directory..."
-mkdir -p /run/user/$(id -u $SUDO_USER)
-chown $SUDO_USER:$SUDO_USER /run/user/$(id -u $SUDO_USER)
-chmod 700 /run/user/$(id -u $SUDO_USER)
-
-# Debug: Check ALSA devices
-echo "Checking ALSA devices..."
-aplay -l || echo "No ALSA devices found - this is expected if using only Bluetooth"
-
-# Reload systemd daemon to pick up new service files
-echo "Reloading systemd daemon..."
-systemctl --user -M $SUDO_USER@ daemon-reload
-sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user daemon-reload
+# Function to run systemd commands as user
+run_as_user() {
+    local cmd="$1"
+    # Use machinectl to run commands in user session
+    machinectl shell $SUDO_USER@ /bin/sh -c "export XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) && $cmd"
+}
 
 # Function to start and verify service with better error handling
 start_and_verify_service() {
@@ -378,26 +359,25 @@ start_and_verify_service() {
     # Enable and start the socket first if it exists
     if [ -f /usr/lib/systemd/user/${service}.socket ]; then
         echo "Enabling ${service}.socket..."
-        sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user enable ${service}.socket
-        sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user start ${service}.socket
+        run_as_user "systemctl --user enable ${service}.socket"
+        run_as_user "systemctl --user start ${service}.socket"
         sleep 2
     fi
     
     # Try to start the service
-    if ! sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user start $service; then
-        echo "Warning: Failed to start $service directly"
-        # Try alternative method
-        systemctl --user -M $SUDO_USER@ start $service || true
+    if ! run_as_user "systemctl --user start $service"; then
+        echo "Warning: Failed to start $service"
+        return 1
     fi
     
     # Wait for service to settle
     sleep 3
     
-    # Check service status
-    if ! sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user --no-pager status $service; then
+    # Check service status (non-blocking)
+    if ! run_as_user "systemctl --user --no-pager status $service"; then
         echo "Warning: $service failed to start properly"
         echo "Service logs:"
-        sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) journalctl --user -u $service --no-pager -n 50 || true
+        run_as_user "journalctl --user -u $service --no-pager -n 50"
         return 1
     fi
     return 0
@@ -408,8 +388,8 @@ echo "Starting PipeWire stack..."
 
 # Enable sockets first
 echo "Enabling PipeWire sockets..."
-sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user enable pipewire.socket pipewire-pulse.socket
-sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user start pipewire.socket pipewire-pulse.socket
+run_as_user "systemctl --user enable pipewire.socket pipewire-pulse.socket"
+run_as_user "systemctl --user start pipewire.socket pipewire-pulse.socket"
 sleep 2
 
 # Now start services
@@ -417,7 +397,7 @@ start_and_verify_service pipewire
 sleep 2
 
 # Verify PipeWire is running before starting WirePlumber
-if sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) pw-cli info 0 > /dev/null 2>&1; then
+if run_as_user "pw-cli info 0" > /dev/null 2>&1; then
     echo "PipeWire is running, starting WirePlumber..."
     start_and_verify_service wireplumber
     sleep 2
@@ -426,7 +406,7 @@ else
     echo "Error: PipeWire is not running properly, cannot start WirePlumber"
     # Show PipeWire logs
     echo "PipeWire logs:"
-    sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) journalctl --user -u pipewire --no-pager -n 50 || true
+    run_as_user "journalctl --user -u pipewire --no-pager -n 50"
 fi
 
 # Debug: Check PipeWire socket and processes
@@ -436,72 +416,69 @@ ls -l /run/user/$(id -u $SUDO_USER)/pipewire-0 || echo "PipeWire socket not foun
 echo "Debug: Checking PipeWire processes..."
 ps aux | grep pipewire
 
-# Wait longer for PipeWire to fully initialize
+# Wait for PipeWire to initialize with timeout
 echo "Waiting for PipeWire to initialize..."
-for i in {1..10}; do
-    if sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) pw-cli info 0 > /dev/null 2>&1; then
+for i in {1..5}; do
+    if run_with_timeout "run_as_user 'pw-cli info 0'" "5"; then
         echo "PipeWire initialized successfully"
         break
     fi
     echo "Attempt $i: Waiting for PipeWire to initialize..."
-    sleep 3
-    
-    # On every other attempt, try restarting pipewire
-    if [ $((i % 2)) -eq 0 ]; then
-        echo "Attempting to restart PipeWire..."
-        sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user restart pipewire
-        sleep 2
-    fi
+    sleep 2
 done
 
-# Force reload of ALSA and check for devices
-echo "Reloading ALSA..."
-alsactl kill rescan || true
-sleep 2
-
-# Check for audio nodes with detailed output
+# Check for audio nodes with timeout
 echo "Checking for audio nodes..."
 echo "Debug: Full PipeWire dump:"
-sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) pw-dump || true
+run_with_timeout "run_as_user 'pw-dump'" "5" || true
 
 echo "Debug: Looking for audio sinks..."
-if ! sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) pw-dump | grep -q "Audio/Sink"; then
+if ! run_with_timeout "run_as_user 'pw-dump'" "5" | grep -q "Audio/Sink"; then
     echo "Warning: No audio sinks found. Checking system state:"
     echo "1. ALSA devices:"
     aplay -l
     echo "2. PipeWire modules:"
-    sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) pw-cli list-objects | grep module || true
+    run_with_timeout "run_as_user 'pw-cli list-objects'" "5" | grep module || true
     echo "3. Active PipeWire nodes:"
-    sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) pw-cli list-objects | grep node || true
+    run_with_timeout "run_as_user 'pw-cli list-objects'" "5" | grep node || true
     echo "4. PipeWire service status:"
-    sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user status pipewire
+    run_as_user "systemctl --user --no-pager status pipewire" || true
 fi
 
-# Start bluetooth
-echo "Starting Bluetooth service..."
-systemctl start bluetooth
-sleep 2
+# Check audio-sync service configuration
+echo "Checking audio-sync service configuration..."
+cat /home/$SUDO_USER/.config/systemd/user/audio-sync.service
 
-# Enable user services
-echo "Enabling user services..."
-sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user enable pipewire pipewire-pulse wireplumber
-sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user enable audio-sync
+# Verify Python environment
+echo "Verifying Python environment..."
+run_as_user "python3 -c 'import fastapi, uvicorn, dotenv, pydantic, websockets'" || {
+    echo "Error: Missing Python dependencies"
+    exit 1
+}
+
+# Check service status with better error handling
+check_service() {
+    local service=$1
+    echo "Checking $service..."
+    if ! run_with_timeout "run_as_user 'systemctl --user --no-pager status $service'" "5" > /dev/null 2>&1; then
+        FAILED_SERVICES="$FAILED_SERVICES $service"
+        echo "Service $service failed. Last logs:"
+        run_as_user "systemctl --user --no-pager status $service" || true
+        run_as_user "journalctl --user -u $service --no-pager -n 20" || true
+        
+        # For audio-sync specifically, check if the service file exists and is valid
+        if [ "$service" = "audio-sync" ]; then
+            echo "Checking audio-sync service configuration..."
+            cat /home/$SUDO_USER/.config/systemd/user/audio-sync.service
+            echo "Checking if Python application exists..."
+            ls -l /opt/pi-audio-sync/src/main.py || echo "main.py not found!"
+        fi
+    fi
+}
 
 # Final status check
 echo "Performing final status check..."
 FAILED_SERVICES=""
-
-check_service() {
-    local service=$1
-    echo "Checking $service..."
-    if ! systemctl --user -M $SUDO_USER@ --no-pager status $1 > /dev/null 2>&1; then
-        FAILED_SERVICES="$FAILED_SERVICES $1"
-        # Show the failed service logs without pager
-        echo "Service $1 failed. Last logs:"
-        systemctl --user -M $SUDO_USER@ --no-pager status $1 || true
-        journalctl --user-unit=$1 --no-pager -n 20 || true
-    fi
-}
 
 check_service pipewire
 check_service pipewire-pulse
@@ -536,3 +513,82 @@ else
     echo "Check PipeWire status with: pw-cli info 0"
     echo "Check audio devices with: pw-dump | grep Audio/Sink"
 fi 
+
+# Function to run command with timeout
+run_with_timeout() {
+    local cmd="$1"
+    local timeout="$2"
+    
+    # Run command with timeout
+    timeout "$timeout" bash -c "$cmd" || {
+        echo "Command timed out after ${timeout} seconds: $cmd"
+        return 1
+    }
+}
+
+# Debug: Check PipeWire socket and processes
+echo "Debug: Checking PipeWire socket..."
+ls -l /run/user/$(id -u $SUDO_USER)/pipewire-0 || echo "PipeWire socket not found"
+
+echo "Debug: Checking PipeWire processes..."
+ps aux | grep pipewire
+
+# Wait for PipeWire to initialize with timeout
+echo "Waiting for PipeWire to initialize..."
+for i in {1..5}; do
+    if run_with_timeout "run_as_user 'pw-cli info 0'" "5"; then
+        echo "PipeWire initialized successfully"
+        break
+    fi
+    echo "Attempt $i: Waiting for PipeWire to initialize..."
+    sleep 2
+done
+
+# Check for audio nodes with timeout
+echo "Checking for audio nodes..."
+echo "Debug: Full PipeWire dump:"
+run_with_timeout "run_as_user 'pw-dump'" "5" || true
+
+echo "Debug: Looking for audio sinks..."
+if ! run_with_timeout "run_as_user 'pw-dump'" "5" | grep -q "Audio/Sink"; then
+    echo "Warning: No audio sinks found. Checking system state:"
+    echo "1. ALSA devices:"
+    aplay -l
+    echo "2. PipeWire modules:"
+    run_with_timeout "run_as_user 'pw-cli list-objects'" "5" | grep module || true
+    echo "3. Active PipeWire nodes:"
+    run_with_timeout "run_as_user 'pw-cli list-objects'" "5" | grep node || true
+    echo "4. PipeWire service status:"
+    run_as_user "systemctl --user --no-pager status pipewire" || true
+fi
+
+# Check audio-sync service configuration
+echo "Checking audio-sync service configuration..."
+cat /home/$SUDO_USER/.config/systemd/user/audio-sync.service
+
+# Verify Python environment
+echo "Verifying Python environment..."
+run_as_user "python3 -c 'import fastapi, uvicorn, dotenv, pydantic, websockets'" || {
+    echo "Error: Missing Python dependencies"
+    exit 1
+}
+
+# Check service status with better error handling
+check_service() {
+    local service=$1
+    echo "Checking $service..."
+    if ! run_with_timeout "run_as_user 'systemctl --user --no-pager status $service'" "5" > /dev/null 2>&1; then
+        FAILED_SERVICES="$FAILED_SERVICES $service"
+        echo "Service $service failed. Last logs:"
+        run_as_user "systemctl --user --no-pager status $service" || true
+        run_as_user "journalctl --user -u $service --no-pager -n 20" || true
+        
+        # For audio-sync specifically, check if the service file exists and is valid
+        if [ "$service" = "audio-sync" ]; then
+            echo "Checking audio-sync service configuration..."
+            cat /home/$SUDO_USER/.config/systemd/user/audio-sync.service
+            echo "Checking if Python application exists..."
+            ls -l /opt/pi-audio-sync/src/main.py || echo "main.py not found!"
+        fi
+    fi
+} 
