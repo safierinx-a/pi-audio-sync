@@ -101,6 +101,7 @@ SYSTEM_PACKAGES=(
     pipewire-bin
     pipewire-tests
     pipewire-alsa
+    pipewire-module-bluetooth
     libpipewire-0.3-*
     libspa-0.2-*
     libspa-0.2-bluetooth
