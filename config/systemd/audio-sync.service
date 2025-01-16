@@ -1,22 +1,28 @@
 [Unit]
 Description=Pi Audio Sync Service
-After=network.target
+After=network.target pipewire.socket pipewire.service pipewire-pulse.socket pipewire-pulse.service wireplumber.service bluetooth.service
 Requires=pipewire.service pipewire-pulse.service wireplumber.service
-After=pipewire.service pipewire-pulse.service wireplumber.service
+BindsTo=pipewire.socket pipewire-pulse.socket
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=all
+EnvironmentFile=/opt/pi-audio-sync/.env
 Environment=PYTHONPATH=/opt/pi-audio-sync
 Environment=PYTHONUNBUFFERED=1
-Environment=LOG_LEVEL=DEBUG
-Environment=HOST=0.0.0.0
-Environment=PORT=8000
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=PULSE_SERVER=/run/user/1000/pulse/native
+ExecStartPre=/bin/sleep 3
 ExecStart=/usr/bin/python3 -u -m src.main
 WorkingDirectory=/opt/pi-audio-sync
 StandardOutput=append:/var/log/pi-audio-sync/audio-sync.log
 StandardError=append:/var/log/pi-audio-sync/audio-sync.log
 Restart=on-failure
-RestartSec=5s
+RestartSec=10s
+TimeoutStartSec=60s
+WatchdogSec=30s
 
 [Install]
 WantedBy=default.target 
