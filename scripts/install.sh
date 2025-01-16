@@ -42,9 +42,39 @@ is_package_installed() {
 # Function to run systemd user commands
 run_systemd_user() {
     local cmd="$1"
+    echo "Debug: Setting up systemd user environment..."
+    echo "Debug: SUDO_USER=$SUDO_USER"
+    echo "Debug: User ID=$(id -u $SUDO_USER)"
+    
+    # Enable lingering for the user
+    echo "Debug: Enabling lingering..."
     loginctl enable-linger $SUDO_USER
+    
+    # Set up runtime directory
+    echo "Debug: Setting up runtime directory..."
     export XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER)
-    su - $SUDO_USER -c "systemctl --user $cmd"
+    mkdir -p $XDG_RUNTIME_DIR
+    chown $SUDO_USER:$SUDO_USER $XDG_RUNTIME_DIR
+    chmod 700 $XDG_RUNTIME_DIR
+    
+    # Export DBUS session address
+    echo "Debug: Setting up DBUS session..."
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u $SUDO_USER)/bus"
+    export DBUS_SESSION_BUS_ADDRESS
+    
+    # Run the command with full environment
+    echo "Debug: Running command: $cmd"
+    su - $SUDO_USER -c "export XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR; export DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS; systemctl --user $cmd"
+    
+    local result=$?
+    if [ $result -ne 0 ]; then
+        echo "Debug: Command failed with exit code $result"
+        echo "Debug: Systemd status:"
+        systemctl status --user -M $SUDO_USER@ || true
+        echo "Debug: Journal output:"
+        journalctl -n 50 --no-pager || true
+    fi
+    return $result
 }
 
 # Clean up old services and state
