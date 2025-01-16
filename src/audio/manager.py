@@ -34,16 +34,45 @@ class AudioManager:
                 )
             logger.debug(f"Found PipeWire socket at {runtime_dir}/pipewire-0")
 
-            # Try to list nodes
-            result = subprocess.run(
-                ["pw-cli", "ls", "Node"], capture_output=True, text=True
-            )
-            logger.debug(f"pw-cli ls Node return code: {result.returncode}")
-            logger.debug(f"pw-cli ls Node stdout: {result.stdout}")
-            logger.debug(f"pw-cli ls Node stderr: {result.stderr}")
+            # Force PipeWire to load ALSA nodes
+            logger.debug("Forcing PipeWire to load ALSA nodes...")
+            subprocess.run(["systemctl", "--user", "restart", "pipewire-pulse"])
+            subprocess.run(["sleep", "2"])
 
-            if result.returncode != 0:
-                raise Exception(f"PipeWire is not running: {result.stderr}")
+            # Try to list nodes with timeout and retries
+            max_retries = 3
+            retry_count = 0
+            while retry_count < max_retries:
+                try:
+                    logger.debug(f"Attempt {retry_count + 1} to list PipeWire nodes")
+                    result = subprocess.run(
+                        ["pw-cli", "ls", "Node"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,  # 5 second timeout
+                    )
+                    logger.debug(f"pw-cli ls Node return code: {result.returncode}")
+                    logger.debug(f"pw-cli ls Node stdout: {result.stdout}")
+                    logger.debug(f"pw-cli ls Node stderr: {result.stderr}")
+
+                    if result.returncode == 0 and result.stdout.strip():
+                        break
+
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        logger.warning(f"No nodes found, retrying in 2 seconds...")
+                        subprocess.run(["sleep", "2"])
+                except subprocess.TimeoutExpired:
+                    logger.warning("pw-cli command timed out")
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        logger.warning(f"Retrying in 2 seconds...")
+                        subprocess.run(["sleep", "2"])
+
+            if retry_count == max_retries:
+                raise Exception(
+                    "Failed to find any PipeWire nodes after multiple attempts"
+                )
 
             # Initialize device tracking
             self.devices = {}
