@@ -15,8 +15,8 @@ if [ -z "$SUDO_USER" ]; then
     exit 1
 fi
 
-# Function to run commands with timeout
-run_with_timeout() {
+# Function definitions
+function run_with_timeout() {
     local cmd="$1"
     local timeout="$2"
     local message="$3"
@@ -28,19 +28,16 @@ run_with_timeout() {
     }
 }
 
-# Function to run commands as user
-run_as_user() {
+function run_as_user() {
     local cmd="$1"
-    su - $SUDO_USER -c "$cmd"
+    su - "$SUDO_USER" -c "$cmd"
 }
 
-# Function to check if a package is installed
-is_package_installed() {
+function is_package_installed() {
     dpkg -l "$1" &> /dev/null
 }
 
-# Function to run systemd user commands
-run_systemd_user() {
+function run_systemd_user() {
     local cmd="$1"
     echo "Debug: Setting up systemd user environment..."
     echo "Debug: SUDO_USER=$SUDO_USER"
@@ -48,14 +45,14 @@ run_systemd_user() {
     
     # Enable lingering for the user
     echo "Debug: Enabling lingering..."
-    loginctl enable-linger $SUDO_USER
+    loginctl enable-linger "$SUDO_USER"
     
     # Set up runtime directory
     echo "Debug: Setting up runtime directory..."
-    export XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER)
-    mkdir -p $XDG_RUNTIME_DIR
-    chown $SUDO_USER:$SUDO_USER $XDG_RUNTIME_DIR
-    chmod 700 $XDG_RUNTIME_DIR
+    export XDG_RUNTIME_DIR="/run/user/$(id -u $SUDO_USER)"
+    mkdir -p "$XDG_RUNTIME_DIR"
+    chown "$SUDO_USER:$SUDO_USER" "$XDG_RUNTIME_DIR"
+    chmod 700 "$XDG_RUNTIME_DIR"
     
     # Export DBUS session address
     echo "Debug: Setting up DBUS session..."
@@ -64,13 +61,13 @@ run_systemd_user() {
     
     # Run the command with full environment
     echo "Debug: Running command: $cmd"
-    su - $SUDO_USER -c "export XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR; export DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS; systemctl --user $cmd"
+    su - "$SUDO_USER" -c "export XDG_RUNTIME_DIR='$XDG_RUNTIME_DIR'; export DBUS_SESSION_BUS_ADDRESS='$DBUS_SESSION_BUS_ADDRESS'; systemctl --user $cmd"
     
     local result=$?
     if [ $result -ne 0 ]; then
         echo "Debug: Command failed with exit code $result"
         echo "Debug: Systemd status:"
-        systemctl status --user -M $SUDO_USER@ || true
+        systemctl --user status || true
         echo "Debug: Journal output:"
         journalctl -n 50 --no-pager || true
     fi
@@ -297,13 +294,51 @@ fi
 
 # After installing packages, verify PipeWire modules
 echo "Verifying PipeWire installation..."
-if ! [ -f /usr/lib/pipewire-0.3/libpipewire-module-protocol-native.so ] && \
-   ! [ -f /usr/lib/$(uname -m)-linux-gnu/pipewire-0.3/libpipewire-module-protocol-native.so ]; then
-    echo "Error: PipeWire modules not found. Trying to fix..."
+ARCH=$(uname -m)
+MODULE_PATHS=(
+    "/usr/lib/pipewire-0.3"
+    "/usr/lib/$ARCH-linux-gnu/pipewire-0.3"
+)
+
+# Check for mandatory modules
+MANDATORY_MODULES=(
+    "libpipewire-module-protocol-native.so"
+    "libpipewire-module-client-node.so"
+    "libpipewire-module-adapter.so"
+    "libpipewire-module-metadata.so"
+)
+
+MISSING_MODULES=()
+for module in "${MANDATORY_MODULES[@]}"; do
+    FOUND=0
+    for path in "${MODULE_PATHS[@]}"; do
+        if [ -f "$path/$module" ]; then
+            FOUND=1
+            break
+        fi
+    done
+    if [ $FOUND -eq 0 ]; then
+        MISSING_MODULES+=("$module")
+    fi
+done
+
+if [ ${#MISSING_MODULES[@]} -ne 0 ]; then
+    echo "Error: Missing PipeWire modules:"
+    printf '%s\n' "${MISSING_MODULES[@]}"
+    echo "Trying to fix by reinstalling packages..."
     apt-get install --reinstall pipewire pipewire-bin libpipewire-0.3-* || {
         echo "Failed to install PipeWire modules. Please check your system's package repositories."
         exit 1
     }
+fi
+
+# Verify PipeWire is running
+echo "Verifying PipeWire setup..."
+if ! run_with_timeout "run_as_user 'pw-cli info 0'" 5 "Checking PipeWire core"; then
+    echo "Error: PipeWire core not responding"
+    echo "PipeWire logs:"
+    run_as_user "journalctl --user -u pipewire -n 50"
+    exit 1
 fi
 
 echo "Installation completed successfully!"
