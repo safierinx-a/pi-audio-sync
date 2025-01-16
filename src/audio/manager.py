@@ -5,6 +5,7 @@ Audio Manager for Pi Audio Sync
 import os
 import json
 import subprocess
+import time
 from math import log10
 from typing import List, Optional, Dict, Set
 from loguru import logger
@@ -14,87 +15,93 @@ from ..models import DeviceState, SystemState, DeviceType
 
 class AudioManager:
     def __init__(self):
-        try:
-            # Check if PipeWire is running
-            logger.debug("Checking PipeWire status...")
+        self.max_init_retries = 3
+        self.init_retry_delay = 2
+        self._ensure_pipewire_running()
 
-            # First check if pw-cli exists
-            which_result = subprocess.run(
-                ["which", "pw-cli"], capture_output=True, text=True
-            )
-            if which_result.returncode != 0:
-                raise Exception("pw-cli not found in PATH")
-            logger.debug(f"Found pw-cli at: {which_result.stdout.strip()}")
-
-            # Check PipeWire socket
-            runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "/run/user/1000")
-            if not os.path.exists(f"{runtime_dir}/pipewire-0"):
-                raise Exception(
-                    f"PipeWire socket not found at {runtime_dir}/pipewire-0"
+    def _ensure_pipewire_running(self):
+        """Ensure PipeWire is running and properly initialized"""
+        for attempt in range(self.max_init_retries):
+            try:
+                logger.info(
+                    f"PipeWire initialization attempt {attempt + 1}/{self.max_init_retries}"
                 )
-            logger.debug(f"Found PipeWire socket at {runtime_dir}/pipewire-0")
 
-            # Force PipeWire to load ALSA nodes
-            logger.debug("Forcing PipeWire to load ALSA nodes...")
-            subprocess.run(["systemctl", "--user", "restart", "pipewire-pulse"])
-            subprocess.run(["sleep", "2"])
+                # Check PipeWire socket
+                runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "/run/user/1000")
+                socket_path = f"{runtime_dir}/pipewire-0"
 
-            # Try to get nodes with timeout and retries
-            max_retries = 3
-            retry_count = 0
-            while retry_count < max_retries:
-                try:
-                    logger.debug(f"Attempt {retry_count + 1} to get PipeWire nodes")
-                    result = subprocess.run(
-                        ["pw-dump"], capture_output=True, text=True, timeout=5
+                if not os.path.exists(socket_path):
+                    logger.warning(
+                        f"PipeWire socket not found at {socket_path}, restarting service..."
                     )
-                    logger.debug(f"pw-dump return code: {result.returncode}")
+                    subprocess.run(
+                        ["systemctl", "--user", "restart", "pipewire"], check=True
+                    )
+                    time.sleep(1)
+                    subprocess.run(
+                        ["systemctl", "--user", "restart", "pipewire-pulse"], check=True
+                    )
+                    time.sleep(1)
+                    continue
 
-                    if result.returncode == 0:
-                        try:
-                            nodes = json.loads(result.stdout)
-                            audio_nodes = [
-                                n
-                                for n in nodes
-                                if n.get("info", {})
-                                .get("props", {})
-                                .get("media.class", "")
-                                .startswith("Audio/")
-                            ]
-                            if audio_nodes:
-                                logger.info(f"Found {len(audio_nodes)} audio nodes")
-                                break
-                        except json.JSONDecodeError:
-                            logger.warning("Failed to parse pw-dump output")
+                # Verify PipeWire is responding
+                result = subprocess.run(
+                    ["pw-cli", "info", "0"], capture_output=True, text=True, timeout=5
+                )
+                if result.returncode != 0:
+                    raise Exception(f"PipeWire not responding: {result.stderr}")
 
-                    retry_count += 1
-                    if retry_count < max_retries:
-                        logger.warning(
-                            f"No audio nodes found, retrying in 2 seconds..."
-                        )
-                        subprocess.run(["sleep", "2"])
-                except subprocess.TimeoutExpired:
-                    logger.warning("pw-dump command timed out")
-                    retry_count += 1
-                    if retry_count < max_retries:
-                        logger.warning(f"Retrying in 2 seconds...")
-                        subprocess.run(["sleep", "2"])
-
-            if retry_count == max_retries:
-                raise Exception(
-                    "Failed to find any PipeWire audio nodes after multiple attempts"
+                # Check for ALSA nodes
+                nodes = json.loads(
+                    subprocess.run(
+                        ["pw-dump"], capture_output=True, text=True, timeout=5
+                    ).stdout
                 )
 
-            # Initialize device tracking
-            self.devices = {}
-            self.device_states = {}  # Track volume/mute states per device
-            self.sources = {}  # Track audio sources
-            self.routing = {}  # Track source -> sink mappings
-            self._init_audio()
-            logger.info("Audio manager initialized successfully")
+                alsa_nodes = [
+                    n
+                    for n in nodes
+                    if n.get("info", {})
+                    .get("props", {})
+                    .get("media.class", "")
+                    .startswith("Audio/")
+                ]
+
+                if not alsa_nodes:
+                    logger.warning("No ALSA nodes found, triggering node creation...")
+                    # Force ALSA module load
+                    subprocess.run(["systemctl", "--user", "restart", "pipewire-pulse"])
+                    time.sleep(2)
+                    continue
+
+                logger.info(f"Found {len(alsa_nodes)} audio nodes")
+                return True
+
+            except subprocess.TimeoutExpired:
+                logger.warning("PipeWire command timed out")
+            except json.JSONDecodeError:
+                logger.warning("Failed to parse PipeWire output")
+            except Exception as e:
+                logger.error(f"PipeWire initialization error: {e}")
+
+            if attempt < self.max_init_retries - 1:
+                time.sleep(self.init_retry_delay)
+
+        raise Exception("Failed to initialize PipeWire after multiple attempts")
+
+    def _monitor_pipewire_health(self):
+        """Monitor PipeWire health and attempt recovery if needed"""
+        try:
+            result = subprocess.run(
+                ["pw-cli", "info", "0"], capture_output=True, text=True, timeout=2
+            )
+            if result.returncode != 0:
+                logger.warning("PipeWire health check failed, attempting recovery...")
+                self._ensure_pipewire_running()
         except Exception as e:
-            logger.error(f"Failed to initialize audio: {e}")
-            raise
+            logger.error(f"PipeWire health check error: {e}")
+            self._ensure_pipewire_running()
 
     def _set_driver_volume(self, node_id: str):
         """Set driver/hardware volume with compensation for multiple sinks"""
@@ -716,7 +723,7 @@ class AudioManager:
 
                     # Ensure audio routing is correct
                     self._ensure_audio_routing()
-                    return True
+            return True
             return False
         except Exception as e:
             logger.error(f"Error setting volume: {e}")
@@ -748,10 +755,10 @@ class AudioManager:
                         self.device_states[node_name]["muted"] = muted
                     else:
                         self.device_states[node_name] = {"volume": 100, "muted": muted}
-                    logger.info(
-                        f"{'Muted' if muted else 'Unmuted'} device {sink['props'].get('node.name')}"
-                    )
-                    return True
+            logger.info(
+                f"{'Muted' if muted else 'Unmuted'} device {sink['props'].get('node.name')}"
+            )
+            return True
             return False
         except Exception as e:
             logger.error(f"Error setting mute: {e}")

@@ -239,6 +239,49 @@ apt-get install -y \
     python3-pydantic \
     python3-websockets
 
+# Install PipeWire packages
+echo "Installing PipeWire packages..."
+apt-get install -y pipewire pipewire-audio-client-libraries \
+    pipewire-pulse libspa-0.2-modules libspa-0.2-bluetooth \
+    wireplumber
+
+# Configure main PipeWire settings
+echo "Configuring main PipeWire settings..."
+cat << 'EOF' | tee /etc/pipewire/pipewire.conf
+context.properties = {
+    link.max-buffers = 16
+    core.daemon = true
+    core.name = pipewire-0
+}
+
+context.spa-libs = {
+    audio.convert.* = audioconvert/libspa-audioconvert
+    support.* = support/libspa-support
+}
+
+context.modules = [
+    { name = libpipewire-module-protocol-native }
+    { name = libpipewire-module-metadata }
+    { name = libpipewire-module-spa-device-factory }
+    { name = libpipewire-module-spa-node-factory }
+    { name = libpipewire-module-client-node }
+    { name = libpipewire-module-client-device }
+    { name = libpipewire-module-adapter }
+    { name = libpipewire-module-rt }
+    { name = libpipewire-module-protocol-pulse }
+    { name = libpipewire-module-link-factory }
+    { name = libpipewire-module-session-manager }
+]
+
+context.objects = [
+    { factory = spa-node-factory args = { factory.name = support.node.driver node.name = Dummy-Driver } }
+]
+
+context.exec = [
+    { path = "/usr/bin/wireplumber" args = "" }
+]
+EOF
+
 # Enable required services
 echo "Enabling system services..."
 systemctl --system enable bluetooth

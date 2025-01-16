@@ -3,12 +3,15 @@ API routes for Pi Audio Sync
 """
 
 from fastapi import APIRouter, HTTPException, Depends, Request, Body, WebSocket
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.responses import JSONResponse
 from loguru import logger
 import subprocess
 import os
 from typing import List, Optional, Dict
 from pydantic import BaseModel
 import json
+import time
 
 from ..models import DeviceState, SystemState, VolumeUpdate, DeviceCapabilities
 from ..audio import AudioManager, BluetoothManager
@@ -17,6 +20,74 @@ router = APIRouter(prefix="/api/v1")
 _audio_manager: Optional[AudioManager] = None
 _bluetooth_manager: Optional[BluetoothManager] = None
 _websocket_clients: List[WebSocket] = []
+_request_timestamps: Dict[str, List[float]] = {}  # For rate limiting
+
+# Rate limiting settings
+RATE_LIMIT_REQUESTS = 60  # requests per minute
+RATE_LIMIT_WINDOW = 60  # seconds
+
+
+def _check_rate_limit(client_id: str) -> bool:
+    """Check if client has exceeded rate limit"""
+    now = time.time()
+    if client_id not in _request_timestamps:
+        _request_timestamps[client_id] = []
+
+    # Remove old timestamps
+    _request_timestamps[client_id] = [
+        ts for ts in _request_timestamps[client_id] if now - ts < RATE_LIMIT_WINDOW
+    ]
+
+    # Check rate limit
+    if len(_request_timestamps[client_id]) >= RATE_LIMIT_REQUESTS:
+        return False
+
+    # Add new timestamp
+    _request_timestamps[client_id].append(now)
+    return True
+
+
+@router.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """Rate limiting middleware"""
+    client_id = request.client.host
+    if not _check_rate_limit(client_id):
+        return JSONResponse(status_code=429, content={"detail": "Too many requests"})
+    return await call_next(request)
+
+
+@router.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    try:
+        # Check PipeWire
+        pw_status = (
+            subprocess.run(
+                ["pw-cli", "info", "0"], capture_output=True, text=True
+            ).returncode
+            == 0
+        )
+
+        # Check Bluetooth
+        bt_status = (
+            subprocess.run(
+                ["systemctl", "--user", "is-active", "bluetooth"],
+                capture_output=True,
+                text=True,
+            ).returncode
+            == 0
+        )
+
+        return {
+            "status": "healthy" if pw_status and bt_status else "degraded",
+            "pipewire": "up" if pw_status else "down",
+            "bluetooth": "up" if bt_status else "down",
+            "version": "1.0.0",
+            "uptime": time.time() - _start_time,
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return {"status": "unhealthy", "error": str(e)}
 
 
 def initialize_managers():

@@ -1,3 +1,7 @@
+"""
+Bluetooth Manager for Pi Audio Sync
+"""
+
 import dbus
 import dbus.mainloop.glib
 from gi.repository import GLib
@@ -5,6 +9,7 @@ from typing import Dict, Optional, List, Callable
 from loguru import logger
 import json
 import os
+import time
 from pathlib import Path
 from .agent import BluetoothAgent
 import threading
@@ -20,15 +25,21 @@ class BluetoothManager:
         self.mainloop = GLib.MainLoop()
         self.mainloop_thread = None
 
+        # Connection monitoring
+        self.connection_attempts = {}
+        self.max_reconnect_attempts = 3
+        self.reconnect_delay = 5
+        self.signal_strength_threshold = -70  # dBm
+
         # Initialize Bluetooth objects
         self.manager = dbus.Interface(
             self.bus.get_object("org.bluez", "/"), "org.freedesktop.DBus.ObjectManager"
         )
 
-        # Get adapter
-        self.adapter = self._get_adapter()
+        # Get adapter with retries
+        self.adapter = self._get_adapter_with_retry()
         if not self.adapter:
-            raise Exception("No Bluetooth adapter found")
+            raise Exception("No Bluetooth adapter found after retries")
 
         # Initialize agent manager
         self.agent_manager = dbus.Interface(
@@ -36,21 +47,123 @@ class BluetoothManager:
         )
         self.agent = None
 
-        # Register A2DP sink profile
-        self._register_profiles()
-
-        # Device tracking
+        # Device tracking with quality info
         self.devices: Dict[str, dict] = {}
+        self.device_quality: Dict[str, dict] = {}
         self.trusted_devices: Dict[str, dict] = self._load_trusted_devices()
         self.discovering = False
 
         # Set up signal handlers
         self._setup_signal_handlers()
 
-        # Start agent
+        # Start agent and monitoring
         self._start_agent()
+        self._start_quality_monitoring()
 
         logger.info("Bluetooth manager initialized")
+
+    def _get_adapter_with_retry(
+        self, max_attempts=3, delay=2
+    ) -> Optional[dbus.Interface]:
+        """Get Bluetooth adapter with retries"""
+        for attempt in range(max_attempts):
+            try:
+                adapter = self._get_adapter()
+                if adapter:
+                    return adapter
+            except Exception as e:
+                logger.error(
+                    f"Adapter initialization attempt {attempt + 1} failed: {e}"
+                )
+
+            if attempt < max_attempts - 1:
+                time.sleep(delay)
+
+        return None
+
+    def _start_quality_monitoring(self):
+        """Start monitoring connection quality"""
+
+        def monitor_loop():
+            while True:
+                try:
+                    self._check_all_connections()
+                    time.sleep(5)  # Check every 5 seconds
+                except Exception as e:
+                    logger.error(f"Quality monitoring error: {e}")
+                    time.sleep(1)
+
+        thread = threading.Thread(target=monitor_loop, daemon=True)
+        thread.start()
+
+    def _check_all_connections(self):
+        """Check quality of all connected devices"""
+        for path, device in self.devices.items():
+            if device.get("Connected", False):
+                self._check_connection_quality(path)
+
+    def _check_connection_quality(self, device_path):
+        """Check connection quality for a device"""
+        try:
+            device = self.bus.get_object("org.bluez", device_path)
+            props = dbus.Interface(device, "org.freedesktop.DBus.Properties")
+
+            # Get RSSI
+            try:
+                rssi = props.Get("org.bluez.Device1", "RSSI")
+                self.device_quality[device_path] = {
+                    "rssi": rssi,
+                    "last_check": time.time(),
+                    "status": "good"
+                    if rssi > self.signal_strength_threshold
+                    else "poor",
+                }
+            except:
+                self.device_quality[device_path] = {
+                    "status": "unknown",
+                    "last_check": time.time(),
+                }
+
+            # Check if reconnection needed
+            if self.device_quality[device_path].get("status") == "poor":
+                self._handle_poor_connection(device_path)
+
+        except Exception as e:
+            logger.error(f"Error checking device quality: {e}")
+
+    def _handle_poor_connection(self, device_path):
+        """Handle poor connection quality"""
+        try:
+            device = self.devices.get(device_path, {})
+            if not device.get("Connected", False):
+                return
+
+            # Only attempt reconnect for trusted devices
+            if not device.get("Trusted", False):
+                return
+
+            attempts = self.connection_attempts.get(device_path, 0)
+            if attempts < self.max_reconnect_attempts:
+                logger.warning(
+                    f"Poor connection quality for {device.get('name')}, attempting reconnect..."
+                )
+                self.connection_attempts[device_path] = attempts + 1
+
+                # Disconnect and reconnect
+                self._disconnect_device(device_path)
+                time.sleep(self.reconnect_delay)
+                self._try_connect(device_path)
+            else:
+                logger.error(
+                    f"Max reconnection attempts reached for {device.get('name')}"
+                )
+
+        except Exception as e:
+            logger.error(f"Error handling poor connection: {e}")
+
+    def get_connection_quality(self, device_path) -> dict:
+        """Get connection quality information for a device"""
+        return self.device_quality.get(device_path, {"status": "unknown"})
 
     def _get_adapter(self) -> Optional[dbus.Interface]:
         """Get the first available Bluetooth adapter"""
