@@ -41,8 +41,8 @@ is_package_installed() {
 
 # Clean up old services and state
 echo "Cleaning up old services and state..."
-run_as_user "systemctl --user stop pipewire pipewire-pulse wireplumber audio-sync 2>/dev/null || true"
-run_as_user "systemctl --user disable audio-sync 2>/dev/null || true"
+systemctl --user -M $SUDO_USER@ stop pipewire pipewire-pulse wireplumber audio-sync 2>/dev/null || true
+systemctl --user -M $SUDO_USER@ disable audio-sync 2>/dev/null || true
 
 # Clean up old state
 rm -rf /home/$SUDO_USER/.local/state/pipewire
@@ -129,16 +129,32 @@ cp -r src config requirements.txt /opt/pi-audio-sync/
 # Set up environment file
 echo "Setting up environment file..."
 cat > /opt/pi-audio-sync/.env << EOF
-# Server settings
-HOST=0.0.0.0
-PORT=8000
-
-# Logging
+# Application Settings
+APP_NAME=pi-audio-sync
+APP_ENV=development
+DEBUG=true
 LOG_LEVEL=INFO
 
-# Audio settings
-DEFAULT_VOLUME=0.8
-VOLUME_STEP=0.05
+# Network Settings
+HOST=0.0.0.0
+PORT=8000
+API_PORT=8001
+
+# Audio Settings
+BUILTIN_DEVICE_NAME="Built-in Audio"
+USB_DEVICE_NAME="USB Audio"
+SAMPLE_RATE=44100
+BUFFER_SIZE=2048
+DEFAULT_VOLUME=70
+
+# Home Assistant Integration
+HASS_URL=http://homeassistant:8123
+HASS_TOKEN=
+HASS_ENTITY_PREFIX=media_player.pi_audio
+
+# Security
+API_KEY=
+JWT_SECRET= 
 EOF
 
 chown -R $SUDO_USER:$SUDO_USER /opt/pi-audio-sync
@@ -163,27 +179,27 @@ chmod 700 /run/user/$(id -u $SUDO_USER)
 
 # Reload systemd user daemon
 echo "Reloading systemd user daemon..."
-run_as_user "systemctl --user daemon-reload"
+systemctl --user -M $SUDO_USER@ daemon-reload
 
 # Start PipeWire stack in correct order
 echo "Starting audio services..."
-run_as_user "systemctl --user enable --now pipewire.socket"
+systemctl --user -M $SUDO_USER@ enable --now pipewire.socket
 sleep 2
-run_as_user "systemctl --user enable --now pipewire.service"
+systemctl --user -M $SUDO_USER@ enable --now pipewire.service
 sleep 2
-run_as_user "systemctl --user enable --now wireplumber.service"
+systemctl --user -M $SUDO_USER@ enable --now wireplumber.service
 sleep 2
-run_as_user "systemctl --user enable --now pipewire-pulse.socket"
+systemctl --user -M $SUDO_USER@ enable --now pipewire-pulse.socket
 sleep 2
-run_as_user "systemctl --user enable --now pipewire-pulse.service"
+systemctl --user -M $SUDO_USER@ enable --now pipewire-pulse.service
 sleep 2
 
 # Verify PipeWire is running
 echo "Verifying PipeWire setup..."
-if ! run_with_timeout "run_as_user 'pw-cli info 0'" 5 "Checking PipeWire core"; then
+if ! run_with_timeout "systemctl --user -M $SUDO_USER@ status pipewire" 5 "Checking PipeWire core"; then
     echo "Error: PipeWire core not responding"
     echo "PipeWire logs:"
-    run_as_user "journalctl --user -u pipewire -n 50"
+    journalctl --user -M $SUDO_USER@ -u pipewire -n 50
     exit 1
 fi
 
@@ -201,14 +217,14 @@ fi
 
 # Start audio-sync service
 echo "Starting audio-sync service..."
-run_as_user "systemctl --user enable --now audio-sync.service"
+systemctl --user -M $SUDO_USER@ enable --now audio-sync.service
 
 # Verify service is running
 echo "Verifying audio-sync service..."
-if ! run_with_timeout "run_as_user 'systemctl --user status audio-sync'" 5 "Checking audio-sync service"; then
+if ! run_with_timeout "systemctl --user -M $SUDO_USER@ status audio-sync" 5 "Checking audio-sync service"; then
     echo "Error: audio-sync service failed to start"
     echo "Service logs:"
-    run_as_user "journalctl --user -u audio-sync -n 50"
+    journalctl --user -M $SUDO_USER@ -u audio-sync -n 50
     exit 1
 fi
 
