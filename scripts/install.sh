@@ -112,6 +112,11 @@ SYSTEM_PACKAGES=(
     # Bluetooth stack
     bluetooth
     bluez
+    bluez-tools
+    python3-dbus
+    python3-gi
+    python3-gi-cairo
+    gir1.2-gtk-3.0
     # Python and dependencies
     python3
     python3-pip
@@ -217,6 +222,21 @@ echo "Configuring Bluetooth..."
 systemctl stop bluetooth
 cp config/bluetooth/main.conf /etc/bluetooth/
 systemctl start bluetooth
+systemctl enable bluetooth
+
+# Verify Bluetooth is running
+echo "Verifying Bluetooth setup..."
+if ! systemctl is-active bluetooth > /dev/null; then
+    echo "Error: Bluetooth service not running"
+    systemctl status bluetooth
+    exit 1
+fi
+
+# Ensure Bluetooth adapter is powered on
+if ! bluetoothctl show | grep -q "Powered: yes"; then
+    echo "Powering on Bluetooth adapter..."
+    bluetoothctl power on
+fi
 
 # Ensure runtime directory exists with correct permissions
 echo "Setting up runtime directory..."

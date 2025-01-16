@@ -1,7 +1,7 @@
 [Unit]
 Description=Pi Audio Sync Service
-After=network.target pipewire.socket pipewire.service pipewire-pulse.socket pipewire-pulse.service wireplumber.service bluetooth.service
-Requires=pipewire.service pipewire-pulse.service wireplumber.service
+After=network.target pipewire.socket pipewire.service pipewire-pulse.socket pipewire-pulse.service wireplumber.service bluetooth.service bluetooth.target
+Requires=pipewire.service pipewire-pulse.service wireplumber.service bluetooth.service bluetooth.target
 BindsTo=pipewire.socket pipewire-pulse.socket
 StartLimitIntervalSec=300
 StartLimitBurst=5
