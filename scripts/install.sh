@@ -467,8 +467,14 @@ echo "Performing final status check..."
 FAILED_SERVICES=""
 
 check_service() {
-    if ! systemctl --user -M $SUDO_USER@ status $1 > /dev/null 2>&1; then
+    local service=$1
+    echo "Checking $service..."
+    if ! systemctl --user -M $SUDO_USER@ --no-pager status $1 > /dev/null 2>&1; then
         FAILED_SERVICES="$FAILED_SERVICES $1"
+        # Show the failed service logs without pager
+        echo "Service $1 failed. Last logs:"
+        systemctl --user -M $SUDO_USER@ --no-pager status $1 || true
+        journalctl --user-unit=$1 --no-pager -n 20 || true
     fi
 }
 
