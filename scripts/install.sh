@@ -118,47 +118,71 @@ chown -R ${SUDO_USER}:${SUDO_USER} ${INSTALL_DIR}
 # Configure PipeWire
 echo "Configuring PipeWire..."
 # Create PipeWire config directory
-mkdir -p /etc/pipewire/pipewire.conf.d
-mkdir -p /home/${SUDO_USER}/.config/pipewire/pipewire.conf.d
+mkdir -p /etc/pipewire
+mkdir -p /home/${SUDO_USER}/.config/pipewire
 
-# Copy default config if it doesn't exist
-if [ ! -f /etc/pipewire/pipewire.conf ]; then
-    cp /usr/share/pipewire/pipewire.conf /etc/pipewire/
-fi
-
-# Add Bluetooth audio optimization config
-cat > /etc/pipewire/pipewire.conf.d/99-bluetooth-audio.conf << EOF
+# Copy our optimized config
+cat > /etc/pipewire/pipewire.conf << EOF
+# PipeWire configuration for Pi Audio Sync
 context.properties = {
+    # Core
+    core.daemon = true
+    core.name = pipewire-0
+
+    # Processing
     default.clock.rate = 48000
     default.clock.quantum = 1024
     default.clock.min-quantum = 32
     default.clock.max-quantum = 8192
 }
 
+context.spa-libs = {
+    audio.convert.* = audioconvert/libspa-audioconvert
+    api.alsa.* = alsa/libspa-alsa
+    api.v4l2.* = v4l2/libspa-v4l2
+    api.bluez5.* = bluez5/libspa-bluez5
+}
+
 context.modules = [
     { name = libpipewire-module-protocol-native }
-    { name = libpipewire-module-profiler }
     { name = libpipewire-module-metadata }
     { name = libpipewire-module-spa-device-factory }
     { name = libpipewire-module-spa-node-factory }
     { name = libpipewire-module-client-node }
     { name = libpipewire-module-client-device }
-    { name = libpipewire-module-portal }
-    { name = libpipewire-module-access }
     { name = libpipewire-module-adapter }
+    { name = libpipewire-module-rt
+      args = {
+        nice.level = 0
+      }
+    }
+    { name = libpipewire-module-protocol-pulse }
     { name = libpipewire-module-link-factory }
     { name = libpipewire-module-session-manager }
+]
+
+# Bluetooth settings
+bluez5.properties = {
+    bluez5.enable-sbc-xq = true
+    bluez5.enable-msbc = true
+    bluez5.enable-hw-volume = true
+    bluez5.headset-roles = [ hsp_hs hfp_ag ]
+    bluez5.codecs = [ sbc_xq ldac aac ]
+    bluez5.msbc-support = true
+    bluez5.msbc-quality = high
+    bluez5.auto-connect = true
+}
+
+# Monitor rules for ALSA
+monitor.alsa.rules = [
     {
-        name = libpipewire-module-bluetooth
-        properties = {
-            bluez5.enable-sbc-xq = true
-            bluez5.enable-msbc = true
-            bluez5.enable-hw-volume = true
-            bluez5.headset-roles = [ hsp_hs hfp_ag ]
-            bluez5.codecs = [ sbc_xq ldac aac ]
-            bluez5.msbc-support = true
-            bluez5.msbc-quality = high
-            bluez5.auto-connect = true
+        matches = [
+            { device.name = "~alsa_card.*" }
+        ]
+        actions = {
+            update-props = {
+                api.alsa.soft-mixer = true
+            }
         }
     }
 ]
@@ -169,6 +193,17 @@ stream.properties = {
     channelmix.normalize = false
     channelmix.mix-lfe = false
 }
+
+alsa.properties = {
+    alsa.buffer-size = 4096
+    alsa.period-size = 1024
+    alsa.period-num = 4
+}
+
+# PipeWire-Pulse configuration
+pulse.cmd = [
+    { cmd = "load-module" args = "module-native-protocol-tcp listen=0.0.0.0" }
+]
 EOF
 
 # Set proper ownership for user PipeWire config
