@@ -17,6 +17,14 @@ fi
 
 echo "Installing Pi Audio Sync..."
 
+# Create temporary directory
+TEMP_DIR=$(mktemp -d)
+echo "Created temporary directory: $TEMP_DIR"
+
+# Copy current files to temp directory
+echo "Backing up current files..."
+cp -r . $TEMP_DIR/
+
 # System diagnostics
 echo "Running system diagnostics..."
 echo "Checking audio devices..."
@@ -32,7 +40,12 @@ systemctl --user -M $SUDO_USER@ stop audio-sync || true
 systemctl --user -M $SUDO_USER@ disable audio-sync || true
 rm -f /home/$SUDO_USER/.config/systemd/user/audio-sync.service
 rm -rf /etc/pipewire/*
-rm -rf /opt/pi-audio-sync/*
+
+# Only remove contents of /opt/pi-audio-sync if it exists and is not the current directory
+if [ -d "/opt/pi-audio-sync" ] && [ "$PWD" != "/opt/pi-audio-sync" ]; then
+    echo "Cleaning up old installation directory..."
+    rm -rf /opt/pi-audio-sync/*
+fi
 
 # System Dependencies
 echo "Installing system dependencies..."
@@ -93,10 +106,10 @@ mkdir -p /etc/pipewire
 mkdir -p /home/$SUDO_USER/.config/systemd/user
 mkdir -p /home/$SUDO_USER/.config/pipewire
 
-# Copy configurations
+# Copy configurations from temp directory
 echo "Copying configuration files..."
-cp -r config/pipewire/* /etc/pipewire/
-cp -r config/bluetooth/* /etc/bluetooth/
+cp -r $TEMP_DIR/config/pipewire/* /etc/pipewire/
+cp -r $TEMP_DIR/config/bluetooth/* /etc/bluetooth/
 
 # Verify PipeWire configuration
 echo "Verifying PipeWire configuration..."
@@ -108,13 +121,13 @@ fi
 # Install application
 echo "Installing application..."
 mkdir -p /opt/pi-audio-sync
-cp -r src /opt/pi-audio-sync/
-cp -r config /opt/pi-audio-sync/
+cp -r $TEMP_DIR/src /opt/pi-audio-sync/
+cp -r $TEMP_DIR/config /opt/pi-audio-sync/
 chown -R $SUDO_USER:$SUDO_USER /opt/pi-audio-sync
 
 # Install service
 echo "Installing service..."
-cp config/systemd/audio-sync.service /home/$SUDO_USER/.config/systemd/user/
+cp $TEMP_DIR/config/systemd/audio-sync.service /home/$SUDO_USER/.config/systemd/user/
 chown -R $SUDO_USER:$SUDO_USER /home/$SUDO_USER/.config
 
 # Create log directory
@@ -161,6 +174,10 @@ sleep 2
 echo "Enabling user services..."
 sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user enable pipewire pipewire-pulse wireplumber
 sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user enable audio-sync
+
+# Clean up temp directory
+echo "Cleaning up temporary files..."
+rm -rf $TEMP_DIR
 
 echo "Installation complete!"
 echo "Please reboot your system to ensure all changes take effect."
