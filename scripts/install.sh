@@ -101,6 +101,10 @@ SYSTEM_PACKAGES=(
     pipewire
     pipewire-audio-client-libraries
     pipewire-pulse
+    pipewire-bin
+    pipewire-tests
+    libpipewire-0.3-*
+    libspa-0.2-*
     wireplumber
     # Bluetooth stack
     bluetooth
@@ -112,6 +116,7 @@ SYSTEM_PACKAGES=(
     python3-wheel
     # System utilities
     alsa-utils
+    dbus
 )
 
 # Check package availability
@@ -264,6 +269,17 @@ if ! run_with_timeout "run_as_user 'systemctl --user status audio-sync'" 5 "Chec
     echo "Service logs:"
     run_as_user "journalctl --user -u audio-sync -n 50"
     exit 1
+fi
+
+# After installing packages, verify PipeWire modules
+echo "Verifying PipeWire installation..."
+if ! [ -f /usr/lib/pipewire-0.3/libpipewire-module-protocol-native.so ] && \
+   ! [ -f /usr/lib/$(uname -m)-linux-gnu/pipewire-0.3/libpipewire-module-protocol-native.so ]; then
+    echo "Error: PipeWire modules not found. Trying to fix..."
+    apt-get install --reinstall pipewire pipewire-bin libpipewire-0.3-* || {
+        echo "Failed to install PipeWire modules. Please check your system's package repositories."
+        exit 1
+    }
 fi
 
 echo "Installation completed successfully!"
