@@ -384,4 +384,52 @@ echo "Installation completed successfully!"
 echo "You can check the service status with: systemctl --user status audio-sync"
 echo "View logs with: journalctl --user -u audio-sync -f"
 echo "View PipeWire status with: pw-cli info 0"
-echo "List audio devices with: pw-dump | grep Audio/" 
+echo "List audio devices with: pw-dump | grep Audio/"
+
+# Verify PipeWire installation and modules
+echo "Verifying PipeWire installation..."
+if ! command -v pw-cli >/dev/null 2>&1; then
+    echo "Error: PipeWire CLI tools not found"
+    exit 1
+fi
+
+# Create necessary directories with correct permissions
+mkdir -p ~/.config/systemd/user
+mkdir -p ~/.local/state/wireplumber
+mkdir -p ~/.local/state/pipewire
+chmod 700 ~/.local/state/wireplumber
+chmod 700 ~/.local/state/pipewire
+
+# Stop existing services
+systemctl --user stop pipewire pipewire-pulse wireplumber
+
+# Clean up any existing state
+rm -f /run/user/$UID/pipewire-0
+rm -f /run/user/$UID/pipewire-0-manager
+rm -rf ~/.local/state/pipewire/*
+rm -rf ~/.local/state/wireplumber/*
+
+# Reload systemd configuration
+systemctl --user daemon-reload
+
+# Start core services in order
+echo "Starting PipeWire services..."
+systemctl --user start pipewire.socket
+sleep 2
+systemctl --user start pipewire.service
+sleep 2
+
+# Verify PipeWire is running
+if ! systemctl --user is-active pipewire.service >/dev/null 2>&1; then
+    echo "Error: PipeWire failed to start"
+    journalctl --user -u pipewire -n 50
+    exit 1
+fi
+
+# Start additional services
+systemctl --user start wireplumber.service
+sleep 2
+
+# Verify services are running
+echo "Verifying service status..."
+systemctl --user status pipewire wireplumber 
