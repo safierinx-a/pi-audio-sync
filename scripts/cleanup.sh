@@ -8,9 +8,16 @@ if [ "$EUID" -eq 0 ]; then
         exit 1
     fi
     
-    # Re-run this script as the actual user
-    exec su - "$ACTUAL_USER" -c "bash $(realpath $0)"
+    # Set up environment and re-run this script as the actual user
+    RUNTIME_DIR="/run/user/$(id -u $ACTUAL_USER)"
+    exec su - "$ACTUAL_USER" -c "export XDG_RUNTIME_DIR=$RUNTIME_DIR && bash $(realpath $0)"
     exit 0
+fi
+
+# Verify we have XDG_RUNTIME_DIR set
+if [ -z "$XDG_RUNTIME_DIR" ]; then
+    echo "Error: XDG_RUNTIME_DIR not set"
+    exit 1
 fi
 
 echo "This script will clean up PipeWire state and configuration."
