@@ -57,6 +57,11 @@ apt-get install -y \
     python3-gi \
     python3-aiohttp \
     python3-setuptools \
+    python3-fastapi \
+    python3-uvicorn \
+    python3-dotenv \
+    python3-pydantic \
+    python3-websockets \
     pipewire \
     pipewire-audio-client-libraries \
     pipewire-pulse \
@@ -73,29 +78,35 @@ apt-get install -y \
 echo "Setting up user permissions..."
 usermod -a -G audio,bluetooth,pulse,pulse-access $SUDO_USER
 
-# Clean up old Python packages
-echo "Cleaning up Python packages..."
-pip3 uninstall -y fastapi uvicorn python-dotenv pydantic loguru websockets || true
-
-# Install Python packages
-echo "Installing Python packages..."
-pip3 install --break-system-packages \
-    fastapi==0.104.1 \
-    uvicorn==0.24.0 \
-    python-dotenv==1.0.0 \
-    pydantic==2.5.2 \
-    loguru==0.7.2 \
-    websockets==12.0
-
-# Enable required services
-echo "Enabling system services..."
-systemctl --system enable bluetooth
-systemctl --system start bluetooth
-
 # Configure Bluetooth
 echo "Configuring Bluetooth..."
 # Stop bluetooth to modify settings
 systemctl stop bluetooth
+
+# Configure Bluetooth settings
+echo "Setting up Bluetooth configuration..."
+cat > /etc/bluetooth/main.conf << EOF
+[General]
+Name = Pi Audio Receiver
+Class = 0x240404
+DiscoverableTimeout = 0
+PairableTimeout = 0
+Privacy = 0
+Experimental = true
+FastConnectable = true
+JustWorksRepairing = always
+MultiProfile = multiple
+AutoEnable = true
+
+[Policy]
+AutoEnable = true
+ReconnectAttempts = 3
+ReconnectIntervals = 1,2,4
+
+[GATT]
+KeySize = 0x10
+ExchangeMTU = 517
+EOF
 
 # Set up Bluetooth adapter
 echo "Setting up Bluetooth adapter..."
@@ -103,6 +114,12 @@ if ! hciconfig hci0 up; then
     echo "Error enabling Bluetooth adapter"
     exit 1
 fi
+
+# Make adapter discoverable and pairable
+echo "Making Bluetooth adapter discoverable..."
+hciconfig hci0 piscan
+hciconfig hci0 sspmode 1
+hciconfig hci0 class 0x240404
 
 # Create configuration directories
 echo "Setting up PipeWire configuration..."
@@ -114,6 +131,88 @@ mkdir -p /home/$SUDO_USER/.config/pipewire
 echo "Copying configuration files..."
 cp -r $TEMP_DIR/config/pipewire/* /etc/pipewire/
 cp -r $TEMP_DIR/config/bluetooth/* /etc/bluetooth/
+
+# Configure PipeWire for A2DP sink
+echo "Configuring PipeWire A2DP sink..."
+cat > /etc/pipewire/pipewire-pulse.conf << EOF
+context.properties = {
+    log.level = 2
+}
+
+context.modules = [
+    { name = libpipewire-module-rt
+        args = {
+            nice.level = -11
+            rt.prio = 88
+            rt.time.soft = 200000
+            rt.time.hard = 200000
+        }
+        flags = [ ifexists nofail ]
+    }
+    { name = libpipewire-module-protocol-native }
+    { name = libpipewire-module-client-node }
+    { name = libpipewire-module-adapter }
+    { name = libpipewire-module-metadata }
+    { name = libpipewire-module-protocol-pulse
+        args = {
+            server.address = [ "unix:native" "tcp:4713" ]
+            pulse.min.req = 256/48000
+            pulse.default.req = 960/48000
+            pulse.min.frag = 256/48000
+            pulse.default.frag = 96000/48000
+            pulse.default.tlength = 96000/48000
+            pulse.min.quantum = 256/48000
+        }
+    }
+]
+
+stream.properties = {
+    node.latency = 1024/48000
+    resample.quality = 4
+    channelmix.normalize = false
+    channelmix.mix-lfe = false
+    session.suspend-timeout-seconds = 0
+}
+EOF
+
+# Configure PipeWire Bluetooth
+echo "Configuring PipeWire Bluetooth..."
+cat > /etc/pipewire/pipewire.conf.d/99-bluetooth.conf << EOF
+context.modules = [
+    {
+        name = libpipewire-module-bluetooth
+        args = {
+            bluez5.enable-sbc-xq = true
+            bluez5.enable-msbc = true
+            bluez5.enable-hw-volume = true
+            bluez5.headset-roles = [ a2dp_sink ]
+            bluez5.codecs = [ sbc_xq sbc aac ]
+            bluez5.hfphsp-backend = native
+            bluez5.msbc-support = true
+            bluez5.keep-profile = true
+        }
+    }
+]
+EOF
+
+# Remove pip package management since we're using system packages
+# Clean up old Python packages
+echo "Cleaning up Python packages..."
+apt-get remove -y python3-fastapi python3-uvicorn python3-dotenv python3-pydantic python3-websockets || true
+
+# Install Python packages from apt
+echo "Installing Python packages..."
+apt-get install -y \
+    python3-fastapi \
+    python3-uvicorn \
+    python3-dotenv \
+    python3-pydantic \
+    python3-websockets
+
+# Enable required services
+echo "Enabling system services..."
+systemctl --system enable bluetooth
+systemctl --system start bluetooth
 
 # Verify PipeWire configuration
 echo "Verifying PipeWire configuration..."
