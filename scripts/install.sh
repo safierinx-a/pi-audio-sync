@@ -319,26 +319,63 @@ sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --use
 # Clear any existing PipeWire state
 rm -rf /run/user/$(id -u $SUDO_USER)/pipewire-* || true
 
+# Debug: Check ALSA devices
+echo "Checking ALSA devices..."
+aplay -l
+
 # Start PipeWire stack in the correct order
 echo "Starting PipeWire services..."
 sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user daemon-reload
-sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user start pipewire
-sleep 2
-sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user start wireplumber
-sleep 2
-sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user start pipewire-pulse
 
-# Verify PipeWire is running
-echo "Verifying PipeWire status..."
-if ! sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) pw-cli info 0 > /dev/null; then
-    echo "Error: PipeWire not running properly"
-    exit 1
-fi
+# Start and verify each service
+start_and_verify_service() {
+    local service=$1
+    echo "Starting $service..."
+    sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user start $service
+    sleep 2
+    if ! sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user status $service; then
+        echo "Warning: $service failed to start properly"
+        echo "Service logs:"
+        sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) journalctl --user -u $service -n 50
+    fi
+}
 
-# Check for audio nodes
+start_and_verify_service pipewire
+start_and_verify_service wireplumber
+start_and_verify_service pipewire-pulse
+
+# Debug: Check PipeWire status
+echo "Debug: Checking PipeWire socket..."
+ls -l /run/user/$(id -u $SUDO_USER)/pipewire-0 || echo "PipeWire socket not found"
+
+echo "Debug: Checking PipeWire processes..."
+ps aux | grep pipewire
+
+# Verify PipeWire is running and wait for initialization
+echo "Waiting for PipeWire to initialize..."
+for i in {1..5}; do
+    if sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) pw-cli info 0 > /dev/null 2>&1; then
+        echo "PipeWire initialized successfully"
+        break
+    fi
+    echo "Attempt $i: Waiting for PipeWire to initialize..."
+    sleep 2
+done
+
+# Check for audio nodes with detailed output
 echo "Checking for audio nodes..."
+echo "Debug: Full PipeWire dump:"
+sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) pw-dump
+
+echo "Debug: Looking for audio sinks..."
 if ! sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) pw-dump | grep -q "Audio/Sink"; then
-    echo "Warning: No audio sinks found. This might be normal if no devices are connected."
+    echo "Warning: No audio sinks found. Checking system state:"
+    echo "1. ALSA devices:"
+    aplay -l
+    echo "2. PipeWire modules:"
+    sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) pw-cli list-objects | grep module
+    echo "3. Active PipeWire nodes:"
+    sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) pw-cli list-objects | grep node
 fi
 
 # Start bluetooth
