@@ -11,7 +11,7 @@ Environment=PYTHONUNBUFFERED=1
 Environment=LOG_LEVEL=DEBUG
 Environment=HOST=0.0.0.0
 Environment=PORT=8000
-ExecStart=/opt/pi-audio-sync/venv/bin/python -u -m src.main
+ExecStart=/usr/bin/python3 -u -m src.main
 WorkingDirectory=/opt/pi-audio-sync
 StandardOutput=append:/var/log/pi-audio-sync/audio-sync.log
 StandardError=append:/var/log/pi-audio-sync/audio-sync.log

@@ -23,7 +23,9 @@ apt-get update
 apt-get install -y \
     python3 \
     python3-pip \
-    python3-venv \
+    python3-dbus \
+    python3-gi \
+    python3-aiohttp \
     pipewire \
     pipewire-audio-client-libraries \
     pipewire-pulse \
@@ -31,6 +33,16 @@ apt-get install -y \
     bluetooth \
     bluez \
     bluez-tools
+
+# Install Python packages
+echo "Installing Python packages..."
+pip3 install --break-system-packages \
+    fastapi==0.104.1 \
+    uvicorn==0.24.0 \
+    python-dotenv==1.0.0 \
+    pydantic==2.5.2 \
+    loguru==0.7.2 \
+    websockets==12.0
 
 # Enable required services
 echo "Enabling system services..."
@@ -47,10 +59,12 @@ echo "Copying configuration files..."
 cp -r config/pipewire/* /etc/pipewire/
 cp -r config/bluetooth/* /etc/bluetooth/
 
-# Set up Python environment
-echo "Setting up Python environment..."
-python3 -m venv /opt/pi-audio-sync/venv
-/opt/pi-audio-sync/venv/bin/pip install -r requirements.txt
+# Install application
+echo "Installing application..."
+mkdir -p /opt/pi-audio-sync
+cp -r src /opt/pi-audio-sync/
+cp -r config /opt/pi-audio-sync/
+chown -R $SUDO_USER:$SUDO_USER /opt/pi-audio-sync
 
 # Install service
 echo "Installing service..."
