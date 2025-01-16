@@ -103,7 +103,6 @@ SYSTEM_PACKAGES=(
     pipewire-alsa
     libpipewire-0.3-*
     libpipewire-0.3-modules
-    libpipewire-0.3-modules-extra
     libspa-0.2-*
     libspa-0.2-bluetooth
     libspa-0.2-jack
@@ -330,8 +329,13 @@ if [ ${#MISSING_MODULES[@]} -ne 0 ]; then
     echo "Error: Missing PipeWire modules:"
     printf '%s\n' "${MISSING_MODULES[@]}"
     echo "Trying to fix by reinstalling packages..."
-    apt-get install --reinstall pipewire pipewire-bin libpipewire-0.3-modules libpipewire-0.3-modules-extra || {
+    apt-get install --reinstall pipewire pipewire-bin libpipewire-0.3-modules || {
         echo "Failed to install PipeWire modules. Please check your system's package repositories."
+        # List available packages for debugging
+        echo "Available PipeWire packages:"
+        apt-cache search pipewire
+        echo "Available modules in standard paths:"
+        find /usr/lib -name "libpipewire-module-*.so" 2>/dev/null || true
         exit 1
     }
 fi
