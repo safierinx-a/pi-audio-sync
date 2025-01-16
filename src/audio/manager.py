@@ -15,9 +15,9 @@ from ..models import DeviceState, SystemState, DeviceType
 class AudioManager:
     def __init__(self):
         try:
-            # Check if PipeWire is running
+            # Check if PipeWire is running by listing objects
             result = subprocess.run(
-                ["pw-cli", "info", "0"], capture_output=True, text=True
+                ["pw-cli", "list-objects"], capture_output=True, text=True
             )
             if result.returncode != 0:
                 raise Exception("PipeWire is not running")
