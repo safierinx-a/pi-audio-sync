@@ -122,16 +122,13 @@ chown -R $SUDO_USER:$SUDO_USER /var/log/pi-audio-sync
 
 # Install application
 echo "Installing application..."
+rm -rf /opt/pi-audio-sync
 mkdir -p /opt/pi-audio-sync
-cp -r src /opt/pi-audio-sync/
-cp -r config /opt/pi-audio-sync/
-cp requirements.txt /opt/pi-audio-sync/
+cp -r src config requirements.txt /opt/pi-audio-sync/
 
 # Set up environment file
 echo "Setting up environment file..."
-if [ ! -f /opt/pi-audio-sync/.env ]; then
-    echo "Creating new .env file..."
-    cat > /opt/pi-audio-sync/.env << EOF
+cat > /opt/pi-audio-sync/.env << EOF
 # Server settings
 HOST=0.0.0.0
 PORT=8000
@@ -143,7 +140,6 @@ LOG_LEVEL=INFO
 DEFAULT_VOLUME=0.8
 VOLUME_STEP=0.05
 EOF
-fi
 
 chown -R $SUDO_USER:$SUDO_USER /opt/pi-audio-sync
 
