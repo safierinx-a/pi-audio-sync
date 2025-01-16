@@ -103,8 +103,11 @@ SYSTEM_PACKAGES=(
     pipewire-pulse
     pipewire-bin
     pipewire-tests
+    pipewire-alsa
     libpipewire-0.3-*
     libspa-0.2-*
+    libspa-0.2-bluetooth
+    libspa-0.2-jack
     wireplumber
     # Bluetooth stack
     bluetooth
@@ -117,6 +120,7 @@ SYSTEM_PACKAGES=(
     # System utilities
     alsa-utils
     dbus
+    rtkit  # For realtime priority
 )
 
 # Check package availability
