@@ -1,15 +1,20 @@
 [Unit]
 Description=Pi Audio Sync Service
-PartOf=pipewire.service
-After=pipewire.service pipewire-pulse.service
+After=network.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
-Type=simple
-WorkingDirectory=/opt/pi-audio-sync
 Environment=PYTHONPATH=/opt/pi-audio-sync
-ExecStart=/usr/bin/python3 -m src.main
-Restart=always
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+ExecStartPre=/bin/sleep 2
+ExecStart=/usr/bin/python3 -u -m src.main
+WorkingDirectory=/opt/pi-audio-sync
+Restart=on-failure
 RestartSec=5
+StandardOutput=journal
+StandardError=journal
+User=%u
 
 [Install]
-WantedBy=pipewire.service 
+WantedBy=default.target 
