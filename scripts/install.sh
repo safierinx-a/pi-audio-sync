@@ -346,8 +346,8 @@ loginctl enable-linger $SUDO_USER
 
 # Stop all existing audio services
 echo "Stopping existing audio services..."
-sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user stop pipewire pipewire-pulse wireplumber audio-sync || true
-systemctl --user -M $SUDO_USER@ stop pipewire pipewire-pulse wireplumber audio-sync || true
+sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user stop pipewire-pulse.{service,socket} pipewire.{service,socket} wireplumber.service audio-sync || true
+systemctl --user -M $SUDO_USER@ stop pipewire-pulse.{service,socket} pipewire.{service,socket} wireplumber.service audio-sync || true
 
 # Clear any existing PipeWire state
 echo "Clearing PipeWire state..."
@@ -375,6 +375,14 @@ start_and_verify_service() {
     local service=$1
     echo "Starting $service..."
     
+    # Enable and start the socket first if it exists
+    if [ -f /usr/lib/systemd/user/${service}.socket ]; then
+        echo "Enabling ${service}.socket..."
+        sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user enable ${service}.socket
+        sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user start ${service}.socket
+        sleep 2
+    fi
+    
     # Try to start the service
     if ! sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user start $service; then
         echo "Warning: Failed to start $service directly"
@@ -386,10 +394,10 @@ start_and_verify_service() {
     sleep 3
     
     # Check service status
-    if ! sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user status $service; then
+    if ! sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user --no-pager status $service; then
         echo "Warning: $service failed to start properly"
         echo "Service logs:"
-        sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) journalctl --user -u $service -n 50
+        sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) journalctl --user -u $service --no-pager -n 50 || true
         return 1
     fi
     return 0
@@ -397,12 +405,29 @@ start_and_verify_service() {
 
 # Start services in correct order with proper delays
 echo "Starting PipeWire stack..."
+
+# Enable sockets first
+echo "Enabling PipeWire sockets..."
+sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user enable pipewire.socket pipewire-pulse.socket
+sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user start pipewire.socket pipewire-pulse.socket
+sleep 2
+
+# Now start services
 start_and_verify_service pipewire
 sleep 2
-start_and_verify_service wireplumber
-sleep 2
-start_and_verify_service pipewire-pulse
-sleep 2
+
+# Verify PipeWire is running before starting WirePlumber
+if sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) pw-cli info 0 > /dev/null 2>&1; then
+    echo "PipeWire is running, starting WirePlumber..."
+    start_and_verify_service wireplumber
+    sleep 2
+    start_and_verify_service pipewire-pulse
+else
+    echo "Error: PipeWire is not running properly, cannot start WirePlumber"
+    # Show PipeWire logs
+    echo "PipeWire logs:"
+    sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) journalctl --user -u pipewire --no-pager -n 50 || true
+fi
 
 # Debug: Check PipeWire socket and processes
 echo "Debug: Checking PipeWire socket..."
