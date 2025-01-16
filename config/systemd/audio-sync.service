@@ -1,8 +1,7 @@
 [Unit]
 Description=Pi Audio Sync Service
-After=network.target bluetooth.service user@1000.service pipewire.service pipewire-pulse.service
+After=network.target bluetooth.service
 Wants=bluetooth.service
-Requires=user@1000.service pipewire.service pipewire-pulse.service
 
 [Service]
 Type=simple
@@ -12,9 +11,11 @@ WorkingDirectory=/opt/pi-audio-sync
 Environment=PYTHONPATH=/opt/pi-audio-sync
 Environment=XDG_RUNTIME_DIR=/run/user/1000
 Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+
+# Make sure PipeWire is running
 ExecStartPre=/usr/bin/sudo /usr/sbin/usermod -a -G bluetooth,audio vo603-rpi-1
-# Wait for PipeWire to be fully ready
-ExecStartPre=/bin/sleep 5
+ExecStartPre=/bin/sh -c 'systemctl --user --machine=vo603-rpi-1@ start pipewire pipewire-pulse'
+ExecStartPre=/bin/sleep 2
 ExecStart=/usr/bin/python3 -m src.main
 Restart=always
 RestartSec=5
