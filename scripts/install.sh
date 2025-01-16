@@ -48,9 +48,10 @@ function is_package_installed() {
 
 function run_systemd_user() {
     local cmd="$1"
-    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u $SUDO_USER)/bus" \
-    XDG_RUNTIME_DIR="/run/user/$(id -u $SUDO_USER)" \
-    sudo -u "$SUDO_USER" systemctl --user $cmd
+    sudo -u "$SUDO_USER" \
+    DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
+    XDG_RUNTIME_DIR="$RUNTIME_DIR" \
+    systemctl --user $cmd
 }
 
 # Update package lists first
@@ -104,16 +105,38 @@ apt-get install -y "${SYSTEM_PACKAGES[@]}" || {
 
 # Set up runtime directory and D-Bus session before any systemd commands
 echo "Setting up runtime directory and D-Bus session..."
-mkdir -p /run/user/$(id -u $SUDO_USER)
-chown $SUDO_USER:$SUDO_USER /run/user/$(id -u $SUDO_USER)
-chmod 700 /run/user/$(id -u $SUDO_USER)
+RUNTIME_DIR="/run/user/$(id -u $SUDO_USER)"
+mkdir -p "$RUNTIME_DIR"
+chown $SUDO_USER:$SUDO_USER "$RUNTIME_DIR"
+chmod 700 "$RUNTIME_DIR"
+
+# Export necessary environment variables
+export XDG_RUNTIME_DIR="$RUNTIME_DIR"
+DBUS_SESSION_BUS_ADDRESS="unix:path=$RUNTIME_DIR/bus"
+export DBUS_SESSION_BUS_ADDRESS
 
 # Start D-Bus session if not running
 if ! pgrep -u $SUDO_USER dbus-daemon >/dev/null; then
-    sudo -u $SUDO_USER XDG_RUNTIME_DIR="/run/user/$(id -u $SUDO_USER)" \
-        dbus-daemon --session --address="unix:path=/run/user/$(id -u $SUDO_USER)/bus" --fork --print-address
+    echo "Starting D-Bus session daemon..."
+    sudo -u $SUDO_USER dbus-daemon --session --address="$DBUS_SESSION_BUS_ADDRESS" --nofork --nopidfile --syslog-only &
     sleep 2
 fi
+
+# Verify D-Bus session is running
+echo "Verifying D-Bus session..."
+if ! sudo -u $SUDO_USER dbus-send --session --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus.ListNames >/dev/null 2>&1; then
+    echo "Error: D-Bus session not running properly"
+    exit 1
+fi
+
+# Function to run systemd user commands
+function run_systemd_user() {
+    local cmd="$1"
+    sudo -u "$SUDO_USER" \
+    DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
+    XDG_RUNTIME_DIR="$RUNTIME_DIR" \
+    systemctl --user $cmd
+}
 
 # Clean up old services and state
 echo "Cleaning up old services and state..."
