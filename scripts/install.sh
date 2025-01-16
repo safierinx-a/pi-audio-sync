@@ -167,9 +167,54 @@ echo "Copying configuration files..."
 cp -r $TEMP_DIR/config/pipewire/* /etc/pipewire/
 cp -r $TEMP_DIR/config/bluetooth/* /etc/bluetooth/
 
-# Configure PipeWire for A2DP sink
-echo "Configuring PipeWire A2DP sink..."
-cat > /etc/pipewire/pipewire-pulse.conf << EOF
+# Configure main PipeWire settings
+echo "Configuring main PipeWire settings..."
+cat << 'EOF' | tee /etc/pipewire/pipewire.conf
+context.properties = {
+    link.max-buffers = 16
+    core.daemon = true
+    core.name = pipewire-0
+    mem.allow-mlock = true
+    support.dbus = true
+    log.level = 2
+}
+
+context.spa-libs = {
+    audio.convert.* = audioconvert/libspa-audioconvert
+    api.alsa.* = alsa/libspa-alsa
+    api.v4l2.* = v4l2/libspa-v4l2
+    api.bluez5.* = bluez5/libspa-bluez5
+    support.* = support/libspa-support
+}
+
+context.modules = [
+    # Core
+    { name = libpipewire-module-protocol-native }
+    { name = libpipewire-module-client-node }
+    { name = libpipewire-module-client-device }
+    
+    # Config
+    { name = libpipewire-module-metadata }
+    { name = libpipewire-module-spa-device-factory }
+    { name = libpipewire-module-spa-node-factory }
+    { name = libpipewire-module-adapter }
+    
+    # Session manager interface
+    { name = libpipewire-module-session-manager }
+]
+
+context.objects = [
+    { factory = spa-node-factory args = { factory.name = support.node.driver node.name = Dummy-Driver } }
+]
+
+context.exec = [
+    { path = "/usr/bin/wireplumber" args = "" }
+]
+EOF
+
+# Configure PipeWire Pulse settings
+echo "Configuring PipeWire Pulse settings..."
+cat << 'EOF' | tee /etc/pipewire/pipewire-pulse.conf
 context.properties = {
     log.level = 2
 }
@@ -190,13 +235,13 @@ context.modules = [
     { name = libpipewire-module-metadata }
     { name = libpipewire-module-protocol-pulse
         args = {
-            server.address = [ "unix:native" "tcp:4713" ]
-            pulse.min.req = 256/48000
-            pulse.default.req = 960/48000
-            pulse.min.frag = 256/48000
-            pulse.default.frag = 96000/48000
-            pulse.default.tlength = 96000/48000
-            pulse.min.quantum = 256/48000
+            server.address = [ "unix:native" ]
+            pulse.min.req = 1024/48000
+            pulse.default.req = 1024/48000
+            pulse.min.frag = 1024/48000
+            pulse.default.frag = 1024/48000
+            pulse.default.tlength = 1024/48000
+            pulse.min.quantum = 1024/48000
         }
     }
 ]
@@ -212,7 +257,7 @@ EOF
 
 # Configure PipeWire Bluetooth
 echo "Configuring PipeWire Bluetooth..."
-cat > /etc/pipewire/pipewire.conf.d/99-bluetooth.conf << EOF
+cat << 'EOF' | tee /etc/pipewire/pipewire.conf.d/99-bluetooth.conf
 context.modules = [
     {
         name = libpipewire-module-bluetooth
@@ -226,8 +271,27 @@ context.modules = [
             bluez5.msbc-support = true
             bluez5.keep-profile = true
         }
+        flags = [ ifexists nofail ]
     }
 ]
+EOF
+
+# Create a minimal WirePlumber config
+echo "Configuring WirePlumber..."
+mkdir -p /etc/wireplumber/main.lua.d
+cat << 'EOF' | tee /etc/wireplumber/main.lua.d/51-alsa-disable.lua
+rule = {
+  matches = {
+    {
+      { "device.name", "matches", "alsa_card.*" },
+    },
+  },
+  apply_properties = {
+    ["device.disabled"] = false,
+  },
+}
+
+table.insert(alsa_monitor.rules,rule)
 EOF
 
 # Install Python packages from apt
@@ -244,43 +308,6 @@ echo "Installing PipeWire packages..."
 apt-get install -y pipewire pipewire-audio-client-libraries \
     pipewire-pulse libspa-0.2-modules libspa-0.2-bluetooth \
     wireplumber
-
-# Configure main PipeWire settings
-echo "Configuring main PipeWire settings..."
-cat << 'EOF' | tee /etc/pipewire/pipewire.conf
-context.properties = {
-    link.max-buffers = 16
-    core.daemon = true
-    core.name = pipewire-0
-}
-
-context.spa-libs = {
-    audio.convert.* = audioconvert/libspa-audioconvert
-    support.* = support/libspa-support
-}
-
-context.modules = [
-    { name = libpipewire-module-protocol-native }
-    { name = libpipewire-module-metadata }
-    { name = libpipewire-module-spa-device-factory }
-    { name = libpipewire-module-spa-node-factory }
-    { name = libpipewire-module-client-node }
-    { name = libpipewire-module-client-device }
-    { name = libpipewire-module-adapter }
-    { name = libpipewire-module-rt }
-    { name = libpipewire-module-protocol-pulse }
-    { name = libpipewire-module-link-factory }
-    { name = libpipewire-module-session-manager }
-]
-
-context.objects = [
-    { factory = spa-node-factory args = { factory.name = support.node.driver node.name = Dummy-Driver } }
-]
-
-context.exec = [
-    { path = "/usr/bin/wireplumber" args = "" }
-]
-EOF
 
 # Enable required services
 echo "Enabling system services..."
