@@ -341,47 +341,44 @@ chown -R $SUDO_USER:$SUDO_USER /var/log/pi-audio-sync
 # Initialize PipeWire
 echo "Initializing PipeWire..."
 
-# Ensure systemd user instance is running
-loginctl enable-linger $SUDO_USER
-
 # Function to run systemd commands as user
 run_as_user() {
     local cmd="$1"
-    # Use machinectl to run commands in user session
-    machinectl shell $SUDO_USER@ /bin/sh -c "export XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) && $cmd"
+    # Use su to run commands as the user with proper environment
+    su - $SUDO_USER -c "export XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) && $cmd"
 }
 
-# Function to start and verify service with better error handling
-start_and_verify_service() {
-    local service=$1
-    echo "Starting $service..."
+# Function to run command with timeout
+run_with_timeout() {
+    local cmd="$1"
+    local timeout="$2"
     
-    # Enable and start the socket first if it exists
-    if [ -f /usr/lib/systemd/user/${service}.socket ]; then
-        echo "Enabling ${service}.socket..."
-        run_as_user "systemctl --user enable ${service}.socket"
-        run_as_user "systemctl --user start ${service}.socket"
-        sleep 2
-    fi
-    
-    # Try to start the service
-    if ! run_as_user "systemctl --user start $service"; then
-        echo "Warning: Failed to start $service"
+    # Run command with timeout
+    timeout "$timeout" bash -c "$cmd" || {
+        echo "Command timed out after ${timeout} seconds: $cmd"
         return 1
-    fi
-    
-    # Wait for service to settle
-    sleep 3
-    
-    # Check service status (non-blocking)
-    if ! run_as_user "systemctl --user --no-pager status $service"; then
-        echo "Warning: $service failed to start properly"
-        echo "Service logs:"
-        run_as_user "journalctl --user -u $service --no-pager -n 50"
-        return 1
-    fi
-    return 0
+    }
 }
+
+# Stop all existing audio services
+echo "Stopping existing audio services..."
+run_as_user "systemctl --user stop pipewire-pulse.{service,socket} pipewire.{service,socket} wireplumber.service audio-sync" || true
+
+# Clear any existing PipeWire state
+echo "Clearing PipeWire state..."
+rm -rf /run/user/$(id -u $SUDO_USER)/pipewire-* || true
+rm -rf /home/$SUDO_USER/.local/state/pipewire/* || true
+rm -rf /home/$SUDO_USER/.config/pipewire/media-session.d/* || true
+
+# Ensure runtime directory exists and has correct permissions
+echo "Setting up runtime directory..."
+mkdir -p /run/user/$(id -u $SUDO_USER)
+chown $SUDO_USER:$SUDO_USER /run/user/$(id -u $SUDO_USER)
+chmod 700 /run/user/$(id -u $SUDO_USER)
+
+# Reload systemd daemon
+echo "Reloading systemd daemon..."
+run_as_user "systemctl --user daemon-reload"
 
 # Start services in correct order with proper delays
 echo "Starting PipeWire stack..."
