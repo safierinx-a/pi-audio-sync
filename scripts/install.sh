@@ -102,6 +102,8 @@ SYSTEM_PACKAGES=(
     pipewire-tests
     pipewire-alsa
     libpipewire-0.3-*
+    libpipewire-0.3-modules
+    libpipewire-0.3-modules-extra
     libspa-0.2-*
     libspa-0.2-bluetooth
     libspa-0.2-jack
@@ -306,6 +308,7 @@ MANDATORY_MODULES=(
     "libpipewire-module-client-node.so"
     "libpipewire-module-adapter.so"
     "libpipewire-module-metadata.so"
+    "libpipewire-module-bluez5.so"
 )
 
 MISSING_MODULES=()
@@ -314,6 +317,7 @@ for module in "${MANDATORY_MODULES[@]}"; do
     for path in "${MODULE_PATHS[@]}"; do
         if [ -f "$path/$module" ]; then
             FOUND=1
+            echo "Found $module in $path"
             break
         fi
     done
@@ -326,7 +330,7 @@ if [ ${#MISSING_MODULES[@]} -ne 0 ]; then
     echo "Error: Missing PipeWire modules:"
     printf '%s\n' "${MISSING_MODULES[@]}"
     echo "Trying to fix by reinstalling packages..."
-    apt-get install --reinstall pipewire pipewire-bin libpipewire-0.3-* || {
+    apt-get install --reinstall pipewire pipewire-bin libpipewire-0.3-modules libpipewire-0.3-modules-extra || {
         echo "Failed to install PipeWire modules. Please check your system's package repositories."
         exit 1
     }
