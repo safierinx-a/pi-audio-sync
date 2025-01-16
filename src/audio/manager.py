@@ -272,12 +272,48 @@ class AudioManager:
         try:
             # Get audio sinks from PipeWire
             self.sinks = []
+
+            # First check what ALSA sees
+            logger.debug("Checking ALSA devices...")
+            alsa_result = subprocess.run(
+                ["aplay", "-l"], capture_output=True, text=True
+            )
+            if alsa_result.returncode == 0:
+                logger.debug("ALSA devices found:")
+                logger.debug(alsa_result.stdout)
+
+            # Now check PipeWire nodes
+            logger.debug("Checking PipeWire nodes...")
             result = subprocess.run(
                 ["pw-cli", "ls", "Node"], capture_output=True, text=True
             )
+
             if result.returncode == 0:
                 logger.debug("Raw pw-cli output:")
                 logger.debug(result.stdout)
+
+                if not result.stdout.strip():
+                    logger.warning(
+                        "No PipeWire nodes found - waiting for devices to be registered"
+                    )
+                    # Try running pw-cli info all to see what PipeWire knows about
+                    info_result = subprocess.run(
+                        ["pw-cli", "info", "all"], capture_output=True, text=True
+                    )
+                    logger.debug("PipeWire info all output:")
+                    logger.debug(info_result.stdout)
+
+                    # Force PipeWire to rescan ALSA devices
+                    logger.info("Forcing PipeWire to rescan ALSA devices...")
+                    subprocess.run(["systemctl", "--user", "restart", "pipewire-pulse"])
+                    subprocess.run(["sleep", "2"])
+
+                    # Try listing nodes again
+                    result = subprocess.run(
+                        ["pw-cli", "ls", "Node"], capture_output=True, text=True
+                    )
+                    logger.debug("PipeWire nodes after rescan:")
+                    logger.debug(result.stdout)
 
                 lines = result.stdout.splitlines()
                 current_node_id = None
