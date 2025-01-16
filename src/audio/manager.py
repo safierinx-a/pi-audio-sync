@@ -17,15 +17,33 @@ class AudioManager:
         try:
             # Check if PipeWire is running by listing nodes
             logger.debug("Checking PipeWire status...")
+
+            # First check if pw-cli exists
+            which_result = subprocess.run(
+                ["which", "pw-cli"], capture_output=True, text=True
+            )
+            if which_result.returncode != 0:
+                raise Exception("pw-cli not found in PATH")
+            logger.debug(f"Found pw-cli at: {which_result.stdout.strip()}")
+
+            # Check PipeWire socket
+            runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "/run/user/1000")
+            if not os.path.exists(f"{runtime_dir}/pipewire-0"):
+                raise Exception(
+                    f"PipeWire socket not found at {runtime_dir}/pipewire-0"
+                )
+            logger.debug(f"Found PipeWire socket at {runtime_dir}/pipewire-0")
+
+            # Try to list nodes
             result = subprocess.run(
                 ["pw-cli", "ls", "Node"], capture_output=True, text=True
             )
-            if result.returncode != 0:
-                raise Exception("PipeWire is not running")
+            logger.debug(f"pw-cli ls Node return code: {result.returncode}")
+            logger.debug(f"pw-cli ls Node stdout: {result.stdout}")
+            logger.debug(f"pw-cli ls Node stderr: {result.stderr}")
 
-            logger.debug(f"PipeWire ls Node output: {result.stdout}")
-            if not result.stdout.strip():
-                logger.warning("No PipeWire nodes found, but service is running")
+            if result.returncode != 0:
+                raise Exception(f"PipeWire is not running: {result.stderr}")
 
             # Initialize device tracking
             self.devices = {}
