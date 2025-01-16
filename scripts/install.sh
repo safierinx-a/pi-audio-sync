@@ -39,10 +39,18 @@ is_package_installed() {
     dpkg -l "$1" &> /dev/null
 }
 
+# Function to run systemd user commands
+run_systemd_user() {
+    local cmd="$1"
+    loginctl enable-linger $SUDO_USER
+    export XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER)
+    su - $SUDO_USER -c "systemctl --user $cmd"
+}
+
 # Clean up old services and state
 echo "Cleaning up old services and state..."
-systemctl --user -M $SUDO_USER@ stop pipewire pipewire-pulse wireplumber audio-sync 2>/dev/null || true
-systemctl --user -M $SUDO_USER@ disable audio-sync 2>/dev/null || true
+run_systemd_user "stop pipewire pipewire-pulse wireplumber audio-sync 2>/dev/null || true"
+run_systemd_user "disable audio-sync 2>/dev/null || true"
 
 # Clean up old state
 rm -rf /home/$SUDO_USER/.local/state/pipewire
@@ -179,27 +187,27 @@ chmod 700 /run/user/$(id -u $SUDO_USER)
 
 # Reload systemd user daemon
 echo "Reloading systemd user daemon..."
-systemctl --user -M $SUDO_USER@ daemon-reload
+run_systemd_user "daemon-reload"
 
 # Start PipeWire stack in correct order
 echo "Starting audio services..."
-systemctl --user -M $SUDO_USER@ enable --now pipewire.socket
+run_systemd_user "enable --now pipewire.socket"
 sleep 2
-systemctl --user -M $SUDO_USER@ enable --now pipewire.service
+run_systemd_user "enable --now pipewire.service"
 sleep 2
-systemctl --user -M $SUDO_USER@ enable --now wireplumber.service
+run_systemd_user "enable --now wireplumber.service"
 sleep 2
-systemctl --user -M $SUDO_USER@ enable --now pipewire-pulse.socket
+run_systemd_user "enable --now pipewire-pulse.socket"
 sleep 2
-systemctl --user -M $SUDO_USER@ enable --now pipewire-pulse.service
+run_systemd_user "enable --now pipewire-pulse.service"
 sleep 2
 
 # Verify PipeWire is running
 echo "Verifying PipeWire setup..."
-if ! run_with_timeout "systemctl --user -M $SUDO_USER@ status pipewire" 5 "Checking PipeWire core"; then
+if ! run_with_timeout "run_as_user 'pw-cli info 0'" 5 "Checking PipeWire core"; then
     echo "Error: PipeWire core not responding"
     echo "PipeWire logs:"
-    journalctl --user -M $SUDO_USER@ -u pipewire -n 50
+    run_as_user "journalctl --user -u pipewire -n 50"
     exit 1
 fi
 
@@ -217,14 +225,14 @@ fi
 
 # Start audio-sync service
 echo "Starting audio-sync service..."
-systemctl --user -M $SUDO_USER@ enable --now audio-sync.service
+run_systemd_user "enable --now audio-sync.service"
 
 # Verify service is running
 echo "Verifying audio-sync service..."
-if ! run_with_timeout "systemctl --user -M $SUDO_USER@ status audio-sync" 5 "Checking audio-sync service"; then
+if ! run_with_timeout "run_as_user 'systemctl --user status audio-sync'" 5 "Checking audio-sync service"; then
     echo "Error: audio-sync service failed to start"
     echo "Service logs:"
-    journalctl --user -M $SUDO_USER@ -u audio-sync -n 50
+    run_as_user "journalctl --user -u audio-sync -n 50"
     exit 1
 fi
 
