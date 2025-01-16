@@ -53,6 +53,68 @@ function run_systemd_user() {
     sudo -u "$SUDO_USER" systemctl --user $cmd
 }
 
+# Update package lists first
+echo "Updating package lists..."
+apt-get update || {
+    echo "Failed to update package lists. Please check your internet connection."
+    exit 1
+}
+
+# Install required system packages first
+echo "Installing system packages..."
+SYSTEM_PACKAGES=(
+    # Audio stack
+    pipewire
+    pipewire-audio-client-libraries
+    pipewire-pulse
+    pipewire-bin
+    pipewire-tests
+    pipewire-alsa
+    libpipewire-0.3-*
+    libpipewire-0.3-modules
+    libspa-0.2-*
+    libspa-0.2-bluetooth
+    libspa-0.2-jack
+    wireplumber
+    # Bluetooth stack
+    bluetooth
+    bluez
+    bluez-tools
+    python3-dbus
+    python3-gi
+    python3-gi-cairo
+    gir1.2-gtk-3.0
+    # Python and dependencies
+    python3
+    python3-pip
+    python3-setuptools
+    python3-wheel
+    # System utilities
+    alsa-utils
+    dbus
+    rtkit  # For realtime priority
+)
+
+# Install packages
+echo "Installing system packages..."
+apt-get install -y "${SYSTEM_PACKAGES[@]}" || {
+    echo "Failed to install system packages. Please check the error messages above."
+    exit 1
+}
+
+# Set up runtime directory and D-Bus session before any systemd commands
+echo "Setting up runtime directory and D-Bus session..."
+mkdir -p /run/user/$(id -u $SUDO_USER)
+chown $SUDO_USER:$SUDO_USER /run/user/$(id -u $SUDO_USER)
+chmod 700 /run/user/$(id -u $SUDO_USER)
+
+# Start D-Bus session if not running
+if ! pgrep -u $SUDO_USER dbus-daemon >/dev/null; then
+    sudo -u $SUDO_USER XDG_RUNTIME_DIR="/run/user/$(id -u $SUDO_USER)" \
+        dbus-daemon --session --address="unix:path=/run/user/$(id -u $SUDO_USER)/bus" --fork --print-address
+    sleep 2
+fi
+
 # Clean up old services and state
 echo "Cleaning up old services and state..."
 run_systemd_user "stop pipewire pipewire-pulse wireplumber audio-sync 2>/dev/null || true"
@@ -62,13 +124,6 @@ run_systemd_user "disable audio-sync 2>/dev/null || true"
 rm -rf /home/$SUDO_USER/.local/state/pipewire
 rm -rf /home/$SUDO_USER/.local/state/wireplumber
 rm -f /home/$SUDO_USER/.config/systemd/user/audio-sync.service
-
-# Update package lists
-echo "Updating package lists..."
-apt-get update || {
-    echo "Failed to update package lists. Please check your internet connection."
-    exit 1
-}
 
 # Install apt-file for package content search
 echo "Installing apt-file..."
@@ -107,67 +162,6 @@ echo "4. All SPA modules in system:"
 find /usr -name "libspa-*.so" 2>/dev/null || true
 echo "5. Package providing bluez5 module:"
 apt-file search libpipewire-module-bluez5.so 2>/dev/null || true
-
-# Install required system packages
-echo "Installing system packages..."
-SYSTEM_PACKAGES=(
-    # Audio stack
-    pipewire
-    pipewire-audio-client-libraries
-    pipewire-pulse
-    pipewire-bin
-    pipewire-tests
-    pipewire-alsa
-    libpipewire-0.3-*
-    libpipewire-0.3-modules
-    libspa-0.2-*
-    libspa-0.2-bluetooth
-    libspa-0.2-jack
-    wireplumber
-    # Bluetooth stack
-    bluetooth
-    bluez
-    bluez-tools
-    python3-dbus
-    python3-gi
-    python3-gi-cairo
-    gir1.2-gtk-3.0
-    # Python and dependencies
-    python3
-    python3-pip
-    python3-setuptools
-    python3-wheel
-    # System utilities
-    alsa-utils
-    dbus
-    rtkit  # For realtime priority
-)
-
-# Check package availability
-MISSING_PACKAGES=()
-for pkg in "${SYSTEM_PACKAGES[@]}"; do
-    if ! apt-cache show "$pkg" &> /dev/null; then
-        MISSING_PACKAGES+=("$pkg")
-    fi
-done
-
-if [ ${#MISSING_PACKAGES[@]} -ne 0 ]; then
-    echo "Warning: The following packages are not available in the repositories:"
-    printf '%s\n' "${MISSING_PACKAGES[@]}"
-    echo "Please ensure you have the correct repositories enabled."
-    read -p "Continue anyway? [y/N] " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        exit 1
-    fi
-fi
-
-# Install system packages
-echo "Installing system packages..."
-apt-get install -y "${SYSTEM_PACKAGES[@]}" || {
-    echo "Failed to install system packages. Please check the error messages above."
-    exit 1
-}
 
 # Install Python dependencies
 echo "Installing Python dependencies..."
@@ -252,12 +246,6 @@ if ! bluetoothctl show | grep -q "Powered: yes"; then
     echo "Powering on Bluetooth adapter..."
     bluetoothctl power on
 fi
-
-# Ensure runtime directory exists with correct permissions
-echo "Setting up runtime directory..."
-mkdir -p /run/user/$(id -u $SUDO_USER)
-chown $SUDO_USER:$SUDO_USER /run/user/$(id -u $SUDO_USER)
-chmod 700 /run/user/$(id -u $SUDO_USER)
 
 # Reload systemd user daemon
 echo "Reloading systemd user daemon..."
