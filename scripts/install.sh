@@ -15,6 +15,35 @@ if [ -z "$SUDO_USER" ]; then
     exit 1
 fi
 
+# Check if running on Raspberry Pi OS
+if ! grep -q "Raspberry Pi" /etc/os-release; then
+    echo "This script is designed for Raspberry Pi OS"
+    echo "Current OS: $(cat /etc/os-release | grep PRETTY_NAME)"
+    read -p "Continue anyway? [y/N] " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        exit 1
+    fi
+fi
+
+# Check for internet connectivity
+echo "Checking internet connectivity..."
+if ! ping -c 1 google.com &> /dev/null; then
+    echo "No internet connection. Please connect to the internet and try again."
+    exit 1
+fi
+
+# Create backup directory for existing configs
+BACKUP_DIR="/root/pi-audio-sync-backup-$(date +%Y%m%d-%H%M%S)"
+mkdir -p $BACKUP_DIR
+if [ -d "/etc/pipewire" ]; then
+    cp -r /etc/pipewire $BACKUP_DIR/
+fi
+if [ -d "/etc/bluetooth" ]; then
+    cp -r /etc/bluetooth $BACKUP_DIR/
+fi
+echo "Existing configurations backed up to $BACKUP_DIR"
+
 echo "Installing Pi Audio Sync..."
 
 # Create temporary directory
@@ -28,11 +57,11 @@ cp -r . $TEMP_DIR/
 # System diagnostics
 echo "Running system diagnostics..."
 echo "Checking audio devices..."
-aplay -l
+aplay -l || echo "No ALSA devices found"
 echo "Checking PipeWire installation..."
-which pipewire
-which pw-cli
-which pw-dump
+which pipewire || echo "PipeWire not found"
+which pw-cli || echo "pw-cli not found"
+which pw-dump || echo "pw-dump not found"
 
 # Clean up old installations
 echo "Cleaning up old installations..."
@@ -49,30 +78,35 @@ fi
 
 # System Dependencies
 echo "Installing system dependencies..."
-apt-get update
-apt-get install -y \
-    python3 \
-    python3-pip \
-    python3-dbus \
-    python3-gi \
-    python3-aiohttp \
-    python3-setuptools \
-    python3-fastapi \
-    python3-uvicorn \
-    python3-dotenv \
-    python3-pydantic \
-    python3-websockets \
-    pipewire \
-    pipewire-audio-client-libraries \
-    pipewire-pulse \
-    wireplumber \
-    bluetooth \
-    bluez \
-    bluez-tools \
-    alsa-utils \
-    libasound2-plugins \
-    libspa-0.2-bluetooth \
-    libspa-0.2-modules
+apt-get update || {
+    echo "Failed to update package list. Check your internet connection and try again."
+    exit 1
+}
+
+# Function to check if a package is available
+check_package() {
+    if ! apt-cache show $1 > /dev/null 2>&1; then
+        echo "Warning: Package $1 not found in repositories"
+        return 1
+    fi
+    return 0
+}
+
+# Check package availability before installing
+MISSING_PACKAGES=""
+for package in python3-fastapi python3-uvicorn python3-dotenv python3-pydantic python3-websockets; do
+    if ! check_package $package; then
+        MISSING_PACKAGES="$MISSING_PACKAGES $package"
+    fi
+done
+
+if [ ! -z "$MISSING_PACKAGES" ]; then
+    echo "The following packages are not available in the default repositories:$MISSING_PACKAGES"
+    echo "We will need to install these via pip instead"
+    USE_PIP=1
+else
+    USE_PIP=0
+fi
 
 # Ensure user is in required groups
 echo "Setting up user permissions..."
@@ -121,9 +155,10 @@ hciconfig hci0 piscan
 hciconfig hci0 sspmode 1
 hciconfig hci0 class 0x240404
 
-# Create configuration directories
+# Create PipeWire config directories
 echo "Setting up PipeWire configuration..."
 mkdir -p /etc/pipewire
+mkdir -p /etc/pipewire/pipewire.conf.d
 mkdir -p /home/$SUDO_USER/.config/systemd/user
 mkdir -p /home/$SUDO_USER/.config/pipewire
 
@@ -194,11 +229,6 @@ context.modules = [
     }
 ]
 EOF
-
-# Remove pip package management since we're using system packages
-# Clean up old Python packages
-echo "Cleaning up Python packages..."
-apt-get remove -y python3-fastapi python3-uvicorn python3-dotenv python3-pydantic python3-websockets || true
 
 # Install Python packages from apt
 echo "Installing Python packages..."
@@ -278,12 +308,46 @@ echo "Enabling user services..."
 sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user enable pipewire pipewire-pulse wireplumber
 sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user enable audio-sync
 
+# Final status check
+echo "Performing final status check..."
+FAILED_SERVICES=""
+
+check_service() {
+    if ! systemctl --user -M $SUDO_USER@ status $1 > /dev/null 2>&1; then
+        FAILED_SERVICES="$FAILED_SERVICES $1"
+    fi
+}
+
+check_service pipewire
+check_service pipewire-pulse
+check_service wireplumber
+check_service audio-sync
+
+if [ ! -z "$FAILED_SERVICES" ]; then
+    echo "Warning: The following services failed to start:$FAILED_SERVICES"
+    echo "You may need to investigate these services after reboot"
+fi
+
 # Clean up temp directory
 echo "Cleaning up temporary files..."
 rm -rf $TEMP_DIR
 
 echo "Installation complete!"
-echo "Please reboot your system to ensure all changes take effect."
-echo "After reboot, check service status with: systemctl --user status audio-sync"
-echo "Check PipeWire status with: pw-cli info 0"
-echo "Check audio devices with: pw-dump | grep Audio/Sink" 
+echo "A backup of your original configuration has been saved to $BACKUP_DIR"
+if [ ! -z "$FAILED_SERVICES" ]; then
+    echo "Note: Some services failed to start. Please check the logs after reboot."
+fi
+
+echo "Would you like to reboot now? (recommended)"
+read -p "Reboot now? [y/N] " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    echo "Rebooting in 5 seconds... Press Ctrl+C to cancel"
+    sleep 5
+    reboot
+else
+    echo "Please reboot your system manually to ensure all changes take effect."
+    echo "After reboot, check service status with: systemctl --user status audio-sync"
+    echo "Check PipeWire status with: pw-cli info 0"
+    echo "Check audio devices with: pw-dump | grep Audio/Sink"
+fi 
