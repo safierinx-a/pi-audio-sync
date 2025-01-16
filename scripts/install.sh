@@ -360,6 +360,30 @@ run_with_timeout() {
     }
 }
 
+# Function to start and verify service
+start_and_verify_service() {
+    local service=$1
+    echo "Starting $service..."
+    
+    # Try to start the service
+    if ! run_as_user "systemctl --user start $service"; then
+        echo "Warning: Failed to start $service"
+        return 1
+    fi
+    
+    # Wait for service to settle
+    sleep 3
+    
+    # Check service status
+    if ! run_as_user "systemctl --user --no-pager status $service"; then
+        echo "Warning: $service failed to start properly"
+        echo "Service logs:"
+        run_as_user "journalctl --user -u $service --no-pager -n 50"
+        return 1
+    fi
+    return 0
+}
+
 # Stop all existing audio services
 echo "Stopping existing audio services..."
 run_as_user "systemctl --user stop pipewire-pulse.{service,socket} pipewire.{service,socket} wireplumber.service audio-sync" || true
