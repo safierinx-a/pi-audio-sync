@@ -21,16 +21,25 @@ function run_with_timeout() {
     local timeout="$2"
     local message="$3"
     
-    echo "$message..."
-    timeout "$timeout" bash -c "$cmd" || {
+    echo "Debug: Running command: $cmd"
+    timeout "$timeout" bash -c "$cmd"
+    local exit_code=$?
+    
+    if [ $exit_code -eq 124 ]; then
         echo "Command timed out after ${timeout}s: $cmd"
         return 1
-    }
+    elif [ $exit_code -ne 0 ]; then
+        echo "Command failed with exit code $exit_code: $cmd"
+        return 1
+    fi
+    return 0
 }
 
 function run_as_user() {
     local cmd="$1"
-    su - "$SUDO_USER" -c "$cmd"
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u $SUDO_USER)/bus" \
+    XDG_RUNTIME_DIR="/run/user/$(id -u $SUDO_USER)" \
+    sudo -u "$SUDO_USER" bash -c "$cmd"
 }
 
 function is_package_installed() {
@@ -39,39 +48,9 @@ function is_package_installed() {
 
 function run_systemd_user() {
     local cmd="$1"
-    echo "Debug: Setting up systemd user environment..."
-    echo "Debug: SUDO_USER=$SUDO_USER"
-    echo "Debug: User ID=$(id -u $SUDO_USER)"
-    
-    # Enable lingering for the user
-    echo "Debug: Enabling lingering..."
-    loginctl enable-linger "$SUDO_USER"
-    
-    # Set up runtime directory
-    echo "Debug: Setting up runtime directory..."
-    export XDG_RUNTIME_DIR="/run/user/$(id -u $SUDO_USER)"
-    mkdir -p "$XDG_RUNTIME_DIR"
-    chown "$SUDO_USER:$SUDO_USER" "$XDG_RUNTIME_DIR"
-    chmod 700 "$XDG_RUNTIME_DIR"
-    
-    # Export DBUS session address
-    echo "Debug: Setting up DBUS session..."
-    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u $SUDO_USER)/bus"
-    export DBUS_SESSION_BUS_ADDRESS
-    
-    # Run the command with full environment
-    echo "Debug: Running command: $cmd"
-    su - "$SUDO_USER" -c "export XDG_RUNTIME_DIR='$XDG_RUNTIME_DIR'; export DBUS_SESSION_BUS_ADDRESS='$DBUS_SESSION_BUS_ADDRESS'; systemctl --user $cmd"
-    
-    local result=$?
-    if [ $result -ne 0 ]; then
-        echo "Debug: Command failed with exit code $result"
-        echo "Debug: Systemd status:"
-        systemctl --user status || true
-        echo "Debug: Journal output:"
-        journalctl -n 50 --no-pager || true
-    fi
-    return $result
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u $SUDO_USER)/bus" \
+    XDG_RUNTIME_DIR="/run/user/$(id -u $SUDO_USER)" \
+    sudo -u "$SUDO_USER" systemctl --user $cmd
 }
 
 # Clean up old services and state
@@ -286,16 +265,24 @@ run_systemd_user "daemon-reload"
 
 # Start PipeWire stack in correct order
 echo "Starting audio services..."
-run_systemd_user "enable --now pipewire.socket"
+run_systemd_user "stop pipewire pipewire-pulse wireplumber"
 sleep 2
-run_systemd_user "enable --now pipewire.service"
+
+# Clear any existing state
+rm -rf /home/$SUDO_USER/.local/state/pipewire
+rm -rf /home/$SUDO_USER/.local/state/wireplumber
+
+run_systemd_user "daemon-reload"
+run_systemd_user "start pipewire.socket"
 sleep 2
-run_systemd_user "enable --now wireplumber.service"
+run_systemd_user "start pipewire.service"
 sleep 2
-run_systemd_user "enable --now pipewire-pulse.socket"
+run_systemd_user "start wireplumber.service"
 sleep 2
-run_systemd_user "enable --now pipewire-pulse.service"
+run_systemd_user "start pipewire-pulse.socket"
 sleep 2
+run_systemd_user "start pipewire-pulse.service"
+sleep 5
 
 # Verify PipeWire is running
 echo "Verifying PipeWire setup..."
