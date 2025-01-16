@@ -17,6 +17,15 @@ fi
 
 echo "Installing Pi Audio Sync..."
 
+# System diagnostics
+echo "Running system diagnostics..."
+echo "Checking audio devices..."
+aplay -l
+echo "Checking PipeWire installation..."
+which pipewire
+which pw-cli
+which pw-dump
+
 # Clean up old installations
 echo "Cleaning up old installations..."
 systemctl --user -M $SUDO_USER@ stop audio-sync || true
@@ -40,7 +49,8 @@ apt-get install -y \
     wireplumber \
     bluetooth \
     bluez \
-    bluez-tools
+    bluez-tools \
+    alsa-utils
 
 # Ensure user is in required groups
 echo "Setting up user permissions..."
@@ -65,15 +75,35 @@ echo "Enabling system services..."
 systemctl --system enable bluetooth
 systemctl --system start bluetooth
 
+# Configure Bluetooth
+echo "Configuring Bluetooth..."
+# Stop bluetooth to modify settings
+systemctl stop bluetooth
+
+# Set up Bluetooth adapter
+echo "Setting up Bluetooth adapter..."
+if ! hciconfig hci0 up; then
+    echo "Error enabling Bluetooth adapter"
+    exit 1
+fi
+
 # Create configuration directories
 echo "Setting up PipeWire configuration..."
 mkdir -p /etc/pipewire
 mkdir -p /home/$SUDO_USER/.config/systemd/user
+mkdir -p /home/$SUDO_USER/.config/pipewire
 
 # Copy configurations
 echo "Copying configuration files..."
 cp -r config/pipewire/* /etc/pipewire/
 cp -r config/bluetooth/* /etc/bluetooth/
+
+# Verify PipeWire configuration
+echo "Verifying PipeWire configuration..."
+if [ ! -f /etc/pipewire/pipewire.conf ]; then
+    echo "Error: PipeWire configuration not found"
+    exit 1
+fi
 
 # Install application
 echo "Installing application..."
@@ -92,10 +122,39 @@ echo "Setting up logging..."
 mkdir -p /var/log/pi-audio-sync
 chown -R $SUDO_USER:$SUDO_USER /var/log/pi-audio-sync
 
-# Restart PipeWire stack
-echo "Restarting PipeWire..."
+# Initialize PipeWire
+echo "Initializing PipeWire..."
+# Stop any existing PipeWire instances
+sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user stop pipewire pipewire-pulse wireplumber || true
+
+# Clear any existing PipeWire state
+rm -rf /run/user/$(id -u $SUDO_USER)/pipewire-* || true
+
+# Start PipeWire stack in the correct order
+echo "Starting PipeWire services..."
 sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user daemon-reload
-sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user restart pipewire pipewire-pulse wireplumber
+sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user start pipewire
+sleep 2
+sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user start wireplumber
+sleep 2
+sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --user start pipewire-pulse
+
+# Verify PipeWire is running
+echo "Verifying PipeWire status..."
+if ! sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) pw-cli info 0 > /dev/null; then
+    echo "Error: PipeWire not running properly"
+    exit 1
+fi
+
+# Check for audio nodes
+echo "Checking for audio nodes..."
+if ! sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) pw-dump | grep -q "Audio/Sink"; then
+    echo "Warning: No audio sinks found. This might be normal if no devices are connected."
+fi
+
+# Start bluetooth
+echo "Starting Bluetooth service..."
+systemctl start bluetooth
 sleep 2
 
 # Enable user services
@@ -105,4 +164,6 @@ sudo -u $SUDO_USER XDG_RUNTIME_DIR=/run/user/$(id -u $SUDO_USER) systemctl --use
 
 echo "Installation complete!"
 echo "Please reboot your system to ensure all changes take effect."
-echo "After reboot, check service status with: systemctl --user status audio-sync" 
+echo "After reboot, check service status with: systemctl --user status audio-sync"
+echo "Check PipeWire status with: pw-cli info 0"
+echo "Check audio devices with: pw-dump | grep Audio/Sink" 
