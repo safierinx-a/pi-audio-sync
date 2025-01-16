@@ -56,6 +56,7 @@ apt-get install -y \
     python3-dbus \
     python3-gi \
     python3-aiohttp \
+    python3-setuptools \
     pipewire \
     pipewire-audio-client-libraries \
     pipewire-pulse \
@@ -63,7 +64,10 @@ apt-get install -y \
     bluetooth \
     bluez \
     bluez-tools \
-    alsa-utils
+    alsa-utils \
+    libasound2-plugins \
+    libspa-0.2-bluetooth \
+    libspa-0.2-modules
 
 # Ensure user is in required groups
 echo "Setting up user permissions..."
