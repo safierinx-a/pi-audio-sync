@@ -91,6 +91,44 @@ apt-get update || {
     exit 1
 }
 
+# Install apt-file for package content search
+echo "Installing apt-file..."
+apt-get install -y apt-file || {
+    echo "Failed to install apt-file. Package content search will be limited."
+}
+apt-file update || true
+
+# Check repository configuration
+echo "Verifying repository configuration..."
+if ! grep -r "^deb.*main" /etc/apt/sources.list /etc/apt/sources.list.d/; then
+    echo "Error: Main repository not found in sources"
+    exit 1
+fi
+
+# Debug repository and package information
+echo "=== Repository Status ==="
+apt-cache policy
+echo "=== PipeWire Package Information ==="
+apt-cache show pipewire libpipewire-0.3-modules || true
+echo "=== Available PipeWire Packages ==="
+apt-cache search pipewire
+echo "=== System Architecture ==="
+dpkg --print-architecture
+uname -m
+
+# Debug PipeWire module locations
+echo "=== Searching for PipeWire Modules ==="
+echo "1. Package contents for pipewire-bin:"
+dpkg -L pipewire-bin 2>/dev/null | grep -i module || true
+echo "2. Package contents for libpipewire-0.3-modules:"
+dpkg -L libpipewire-0.3-modules 2>/dev/null | grep -i module || true
+echo "3. All PipeWire modules in system:"
+find /usr -name "libpipewire-module-*.so" 2>/dev/null || true
+echo "4. All SPA modules in system:"
+find /usr -name "libspa-*.so" 2>/dev/null || true
+echo "5. Package providing bluez5 module:"
+apt-file search libpipewire-module-bluez5.so 2>/dev/null || true
+
 # Install required system packages
 echo "Installing system packages..."
 SYSTEM_PACKAGES=(
@@ -307,7 +345,6 @@ MANDATORY_MODULES=(
     "libpipewire-module-client-node.so"
     "libpipewire-module-adapter.so"
     "libpipewire-module-metadata.so"
-    "libpipewire-module-bluez5.so"
 )
 
 MISSING_MODULES=()
@@ -338,6 +375,25 @@ if [ ${#MISSING_MODULES[@]} -ne 0 ]; then
         find /usr/lib -name "libpipewire-module-*.so" 2>/dev/null || true
         exit 1
     }
+fi
+
+# Check for optional Bluetooth module
+echo "Checking for Bluetooth module..."
+BLUETOOTH_MODULE="libpipewire-module-bluez5.so"
+FOUND=0
+for path in "${MODULE_PATHS[@]}"; do
+    if [ -f "$path/$BLUETOOTH_MODULE" ]; then
+        FOUND=1
+        echo "Found $BLUETOOTH_MODULE in $path"
+        break
+    fi
+done
+if [ $FOUND -eq 0 ]; then
+    echo "Warning: Bluetooth module not found. Bluetooth functionality will be limited."
+    echo "Available PipeWire packages:"
+    apt-cache search pipewire
+    echo "Available modules in standard paths:"
+    find /usr/lib -name "libpipewire-module-*.so" 2>/dev/null || true
 fi
 
 # Verify PipeWire is running
