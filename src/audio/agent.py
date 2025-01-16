@@ -1,20 +1,24 @@
 import dbus.service
 from loguru import logger
+import os
 
 
 class BluetoothAgent(dbus.service.Object):
-    """
-    Bluetooth agent for handling pairing requests.
-    Uses a fixed PIN code for simplicity.
-    """
+    """Bluetooth agent for handling pairing and authorization"""
 
     AGENT_PATH = "/org/bluez/agent"
-    CAPABILITY = "KeyboardDisplay"
-    PIN_CODE = "69420"  # Fixed, memorable PIN
+    CAPABILITY = "NoInputNoOutput"
+    PIN = "69420"  # Default PIN for pairing
 
     def __init__(self, bus):
+        """Initialize the agent"""
         super().__init__(bus, self.AGENT_PATH)
-        logger.info("Bluetooth agent initialized. PIN for pairing: 69420")
+        logger.info("Bluetooth agent initialized")
+
+    def remove_from_connection(self):
+        """Clean up the agent"""
+        logger.info("Removing Bluetooth agent from D-Bus connection")
+        super().remove_from_connection()
 
     @dbus.service.method("org.bluez.Agent1", in_signature="os", out_signature="")
     def AuthorizeService(self, device, uuid):
@@ -26,7 +30,7 @@ class BluetoothAgent(dbus.service.Object):
     def RequestPinCode(self, device):
         """Return the PIN code for the device"""
         logger.info(f"PIN code requested for device {device}")
-        return self.PIN_CODE
+        return self.PIN
 
     @dbus.service.method("org.bluez.Agent1", in_signature="o", out_signature="u")
     def RequestPasskey(self, device):

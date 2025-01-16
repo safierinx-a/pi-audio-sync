@@ -94,6 +94,67 @@ The service exposes a REST API that integrates with Home Assistant for:
 
 Configuration instructions can be found in [docs/home-assistant.md](docs/home-assistant.md).
 
+## API Documentation
+
+### System Status
+
+```bash
+# Get system status
+curl http://localhost:8000/api/v1/status
+```
+
+### Audio Devices
+
+```bash
+# Get all devices
+curl http://localhost:8000/api/v1/devices
+
+# Get specific device
+curl http://localhost:8000/api/v1/devices/{device_id}
+
+# Get device capabilities
+curl http://localhost:8000/api/v1/devices/{device_id}/capabilities
+
+# Set volume (0-100)
+curl -X POST -H "Content-Type: application/json" \
+     -d '{"volume": 50}' \
+     http://localhost:8000/api/v1/devices/{device_id}/volume
+
+# Mute device
+curl -X POST http://localhost:8000/api/v1/devices/{device_id}/mute
+
+# Unmute device
+curl -X POST http://localhost:8000/api/v1/devices/{device_id}/unmute
+```
+
+### Bluetooth Management
+
+```bash
+# Get discoverable devices
+curl http://localhost:8000/api/v1/bluetooth/devices
+
+# Start discovery
+curl -X POST http://localhost:8000/api/v1/bluetooth/discovery/start
+
+# Stop discovery
+curl -X POST http://localhost:8000/api/v1/bluetooth/discovery/stop
+
+# Connect to device
+curl -X POST http://localhost:8000/api/v1/bluetooth/devices/{device_path}/connect
+
+# Make Pi discoverable
+curl -X POST http://localhost:8000/api/v1/bluetooth/discoverable
+```
+
+### Home Assistant Integration
+
+```bash
+# Get discovery info
+curl http://localhost:8000/api/v1/ha/discovery
+```
+
+Note: Replace `localhost` with your Pi's IP address when accessing from another device.
+
 ## Development
 
 ### Setup Development Environment

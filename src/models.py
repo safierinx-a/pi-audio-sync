@@ -30,3 +30,11 @@ class SystemState(BaseModel):
 
 class VolumeUpdate(BaseModel):
     volume: int
+
+
+class DeviceCapabilities(BaseModel):
+    can_mute: bool
+    has_volume: bool
+    volume_steps: int
+    is_bluetooth: bool
+    supported_features: List[str]

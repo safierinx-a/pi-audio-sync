@@ -5,6 +5,7 @@ Audio Manager for Pi Audio Sync
 import os
 import json
 import subprocess
+from math import log10
 from typing import List, Optional, Dict, Set
 from loguru import logger
 
@@ -33,114 +34,75 @@ class AudioManager:
             raise
 
     def _set_driver_volume(self, node_id: str):
-        """Set driver/hardware volume to 0 dB for best signal quality"""
+        """Set driver/hardware volume with compensation for multiple sinks"""
         try:
-            # First get the current channel map to know how many channels to set
+            # Get device info first
             info = subprocess.run(
                 ["pw-cli", "info", node_id],
                 capture_output=True,
                 text=True,
             )
 
-            if info.returncode == 0:
-                # Look for audio.channels in the output
-                channels = 2  # Default to stereo
-                is_pro_audio = False
-                device_name = ""
+            if info.returncode != 0:
+                logger.error(f"Failed to get info for device {node_id}")
+                return
 
-                for line in info.stdout.splitlines():
-                    if "audio.channels" in line and ":" in line:
-                        try:
-                            channels = int(line.split(":", 1)[1].strip())
-                        except (ValueError, IndexError):
-                            pass
-                    # Check if it's a professional audio device
-                    elif "node.name" in line:
-                        device_name = line.split(":", 1)[1].strip().lower()
-                        if any(
-                            x in device_name
-                            for x in ["thump", "mackie", "pro", "yamaha", "alsa"]
-                        ):
-                            is_pro_audio = True
-                    elif "api.alsa" in line or "device.api" in line:
-                        is_pro_audio = True
+            # Calculate compensation factor based on number of active sinks
+            active_sinks = len([s for s in self.sinks if s["props"]["node.volume"] > 0])
+            # If this is the first sink, count it
+            compensation = (
+                1.0 if active_sinks == 0 else (2.0 ** ((active_sinks - 1) / 2))
+            )
+            # Convert to dB: 2.0 = ~6dB boost, sqrt(2.0) = ~3dB boost per additional sink
 
-                # Set each channel's volume to 0 dB (1.0 in linear scale)
-                volumes = ",".join(["1.0"] * channels)
+            logger.info(
+                f"Using compensation factor of {compensation:.2f}x for {active_sinks} active sinks"
+            )
 
-                # Configure buffers based on device type
-                if is_pro_audio:
-                    buffer_config = {
-                        "audio.rate": 48000,
-                        "audio.allowed-rates": [48000],
-                        "node.latency": "1024/48000",  # Increased latency for stability
-                        "audio.position": ["FL", "FR"],
-                        "node.pause-on-idle": False,
-                        "api.alsa.period-size": 2048,  # Larger period size
-                        "api.alsa.headroom": 16384,  # More headroom
-                        "api.alsa.disable-mmap": True,  # Disable mmap for compatibility
-                        "session.suspend-timeout-seconds": 0,  # Prevent suspend
-                    }
-                else:
-                    buffer_config = {
-                        "audio.rate": 48000,
-                        "audio.allowed-rates": [48000],
-                        "node.latency": "256/48000",
-                        "audio.position": ["FL", "FR"],
-                        "node.pause-on-idle": False,
-                        "api.alsa.period-size": 256,
-                        "api.alsa.headroom": 4096,
-                    }
+            # Set up default configuration
+            buffer_config = {
+                "audio.rate": 48000,
+                "audio.allowed-rates": [48000],
+                "node.latency": "1024/48000",
+                "audio.position": ["FL", "FR"],
+                "node.pause-on-idle": False,
+                "api.alsa.period-size": 1024,
+                "api.alsa.headroom": 8192,
+            }
 
-                # Apply buffer configuration
-                result = subprocess.run(
-                    [
-                        "pw-cli",
-                        "s",
-                        node_id,
-                        "Props",
-                        json.dumps(buffer_config),
-                    ],
-                    capture_output=True,
-                    text=True,
-                )
+            # Apply buffer configuration
+            subprocess.run(
+                [
+                    "pw-cli",
+                    "s",
+                    node_id,
+                    "Props",
+                    json.dumps(buffer_config),
+                ],
+                capture_output=True,
+                text=True,
+            )
 
-                if result.returncode != 0:
-                    logger.warning(
-                        f"Failed to set buffer config for device {node_id}: {result.stderr}"
-                    )
-                    # Try with minimal config if full config fails
-                    minimal_config = {
-                        "audio.rate": 48000,
-                        "node.latency": "1024/48000" if is_pro_audio else "256/48000",
-                    }
-                    subprocess.run(
-                        [
-                            "pw-cli",
-                            "s",
-                            node_id,
-                            "Props",
-                            json.dumps(minimal_config),
-                        ],
-                        capture_output=True,
-                        text=True,
-                    )
+            # Set volume with compensation (base 1.122 * compensation)
+            compensated_volume = min(
+                1.122 * compensation, 2.0
+            )  # Cap at +6dB to prevent distortion
+            subprocess.run(
+                [
+                    "pw-cli",
+                    "s",
+                    node_id,
+                    "Props",
+                    f'{{"channelVolumes": [{compensated_volume}, {compensated_volume}]}}',
+                ],
+                capture_output=True,
+                text=True,
+            )
 
-                # Set volume after buffer config
-                subprocess.run(
-                    [
-                        "pw-cli",
-                        "s",
-                        node_id,
-                        "Props",
-                        f'{{"channelVolumes": [{volumes}]}}',
-                    ],
-                    capture_output=True,
-                    text=True,
-                )
-                logger.info(
-                    f"Set driver volume to 0 dB and configured {'pro-audio' if is_pro_audio else 'standard'} buffers for device {node_id}"
-                )
+            logger.info(
+                f"Set compensated driver volume to {20 * log10(compensated_volume):.1f} dB for device {node_id}"
+            )
+
         except Exception as e:
             logger.error(f"Error setting driver volume: {e}")
 
@@ -224,45 +186,41 @@ class AudioManager:
                 # Default to routing all sources to all sinks
                 for source in current_sources:
                     source_name = source["name"]
+                    self.routing[source_name] = {
+                        sink["props"]["node.name"] for sink in self.sinks
+                    }
+            else:
+                # Ensure all sources are routed to all sinks
+                for source in current_sources:
+                    source_name = source["name"]
                     if source_name not in self.routing:
                         self.routing[source_name] = set()
+                    # Add all sinks to the routing
                     self.routing[source_name].update(
                         {sink["props"]["node.name"] for sink in self.sinks}
                     )
 
-            # First, unlink all existing connections to start fresh
-            subprocess.run(["pw-link", "-d", "all"], capture_output=True, text=True)
-
-            # Create a stream for each source
+            # Create links for each source to all sinks
             for source in current_sources:
                 source_name = source["name"]
-                if source_name in self.routing:
-                    target_sinks = self.routing[source_name]
-
-                    # Only proceed if we have sinks to route to
-                    if target_sinks:
-                        # Create links with proper buffer settings
-                        for sink in self.sinks:
-                            sink_name = sink["props"]["node.name"]
-                            if sink_name in target_sinks:
-                                try:
-                                    # Set up the link with explicit buffer settings
-                                    subprocess.run(
-                                        [
-                                            "pw-link",
-                                            "--props",
-                                            '{"link.passive": true, "audio.rate": 48000, "audio.channels": 2}',
-                                            source["id"],
-                                            sink["id"],
-                                        ],
-                                        capture_output=True,
-                                        text=True,
-                                    )
-                                    logger.info(
-                                        f"Created synchronized link from {source['description']} to {sink['props']['node.description']}"
-                                    )
-                                except Exception as e:
-                                    logger.error(f"Error creating link: {e}")
+                # Link to all sinks
+                for sink in self.sinks:
+                    try:
+                        # Create link with explicit buffer settings
+                        subprocess.run(
+                            [
+                                "pw-link",
+                                source["id"],
+                                sink["id"],
+                            ],
+                            capture_output=True,
+                            text=True,
+                        )
+                        logger.info(
+                            f"Created link from {source['description']} to {sink['props']['node.description']}"
+                        )
+                    except Exception as e:
+                        logger.error(f"Error creating link: {e}")
 
         except Exception as e:
             logger.error(f"Error ensuring audio routing: {e}")
@@ -486,18 +444,20 @@ class AudioManager:
         try:
             # Store current states
             current_states = self.device_states.copy()
-            current_sinks = {sink["props"]["node.name"]: sink for sink in self.sinks}
+
+            # Clear existing links before refresh
+            subprocess.run(["pw-link", "-d", "all"], capture_output=True, text=True)
+
+            # Wait a moment for PipeWire to settle
+            subprocess.run(["sleep", "0.5"], capture_output=True)
 
             # Reinitialize devices
-            self._init_audio()  # This will also recreate the combined sink
+            self._init_audio()
 
             # Restore states for existing devices
             for sink in self.sinks:
                 node_name = sink["props"]["node.name"]
                 if node_name in current_states:
-                    # Set driver volume to 0 dB first
-                    self._set_driver_volume(sink["id"])
-
                     # Restore volume
                     try:
                         volume = current_states[node_name]["volume"]
@@ -513,31 +473,14 @@ class AudioManager:
                             text=True,
                         )
                         sink["props"]["node.volume"] = volume / 100
+                        self.device_states[node_name] = {
+                            "volume": volume,
+                            "muted": False,
+                        }
                     except Exception as e:
                         logger.error(f"Error restoring volume for {node_name}: {e}")
-
-                    # Restore mute state
-                    try:
-                        muted = current_states[node_name]["muted"]
-                        subprocess.run(
-                            [
-                                "pw-cli",
-                                "s",
-                                sink["id"],
-                                "Props",
-                                f'{{"mute": {str(muted).lower()}}}',
-                            ],
-                            capture_output=True,
-                            text=True,
-                        )
-                        sink["props"]["node.mute"] = muted
-                    except Exception as e:
-                        logger.error(f"Error restoring mute state for {node_name}: {e}")
                 else:
-                    # New device - set driver volume to 0 dB first
-                    self._set_driver_volume(sink["id"])
-
-                    # Then set safe initial volume
+                    # New device - set safe initial volume
                     try:
                         subprocess.run(
                             ["pw-cli", "s", sink["id"], "Props", '{"volume": 0.05}'],
@@ -551,21 +494,11 @@ class AudioManager:
                             f"Error setting initial volume for {node_name}: {e}"
                         )
 
-                    # Ensure device is linked (active)
-                    try:
-                        subprocess.run(
-                            ["pw-cli", "l", sink["id"]],
-                            capture_output=True,
-                            text=True,
-                        )
-                    except Exception as e:
-                        logger.error(f"Error linking device {node_name}: {e}")
+            # Re-establish audio routing
+            self._ensure_audio_routing()
 
         except Exception as e:
             logger.error(f"Error refreshing devices: {e}")
-            # Restore original states on error
-            self.sinks = [sink for sink in current_sinks.values()]
-            self.device_states = current_states
 
     def _get_device_id_by_name(self, node_name: str) -> Optional[int]:
         """Get device ID by node name"""
@@ -678,7 +611,11 @@ class AudioManager:
                         }
                     logger.info(f"Set volume to {volume}% for device {node_name}")
 
-                    # Ensure audio routing is correct for sync
+                    # Update driver volumes for all sinks to maintain proper compensation
+                    for sink in self.sinks:
+                        self._set_driver_volume(sink["id"])
+
+                    # Ensure audio routing is correct
                     self._ensure_audio_routing()
                     return True
             return False
