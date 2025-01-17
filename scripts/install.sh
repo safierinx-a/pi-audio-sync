@@ -113,18 +113,34 @@ chmod 700 "$RUNTIME_DIR"
 # Export necessary environment variables
 export XDG_RUNTIME_DIR="$RUNTIME_DIR"
 
-# Start D-Bus session using dbus-launch
+# Kill any existing D-Bus sessions for this user
+pkill -u $SUDO_USER dbus-daemon || true
+rm -f "$RUNTIME_DIR/bus" || true
+sleep 1
+
+# Start D-Bus session with specific address
 echo "Starting D-Bus session..."
-eval $(sudo -u $SUDO_USER dbus-launch --sh-syntax)
-export DBUS_SESSION_BUS_ADDRESS
-export DBUS_SESSION_BUS_PID
+sudo -u $SUDO_USER \
+XDG_RUNTIME_DIR="$RUNTIME_DIR" \
+dbus-daemon --session --address="unix:path=$RUNTIME_DIR/bus" --nofork --print-address &
+DBUS_PID=$!
+sleep 2
+
+# Export the D-Bus session address
+export DBUS_SESSION_BUS_ADDRESS="unix:path=$RUNTIME_DIR/bus"
 
 # Verify D-Bus session is running
 echo "Verifying D-Bus session..."
-if ! sudo -u $SUDO_USER dbus-send --session --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus.ListNames >/dev/null 2>&1; then
+if ! sudo -u $SUDO_USER \
+   XDG_RUNTIME_DIR="$RUNTIME_DIR" \
+   DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
+   dbus-send --session --print-reply --dest=org.freedesktop.DBus \
+   /org/freedesktop/DBus org.freedesktop.DBus.ListNames >/dev/null 2>&1; then
     echo "Error: D-Bus session not running properly"
     echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS"
-    echo "DBUS_SESSION_BUS_PID=$DBUS_SESSION_BUS_PID"
+    echo "DBUS_PID=$DBUS_PID"
+    echo "Runtime directory contents:"
+    ls -la "$RUNTIME_DIR"
     exit 1
 fi
 
@@ -132,8 +148,8 @@ fi
 function run_systemd_user() {
     local cmd="$1"
     sudo -u "$SUDO_USER" \
-    DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
     XDG_RUNTIME_DIR="$RUNTIME_DIR" \
+    DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
     systemctl --user $cmd
 }
 
