@@ -112,24 +112,23 @@ chmod 700 "$RUNTIME_DIR"
 
 # Export necessary environment variables
 export XDG_RUNTIME_DIR="$RUNTIME_DIR"
-DBUS_SESSION_BUS_ADDRESS="unix:path=$RUNTIME_DIR/bus"
-export DBUS_SESSION_BUS_ADDRESS
 
-# Start D-Bus session if not running
-if ! pgrep -u $SUDO_USER dbus-daemon >/dev/null; then
-    echo "Starting D-Bus session daemon..."
-    sudo -u $SUDO_USER dbus-daemon --session --address="$DBUS_SESSION_BUS_ADDRESS" --nofork --nopidfile --syslog-only &
-    sleep 2
-fi
+# Start D-Bus session using dbus-launch
+echo "Starting D-Bus session..."
+eval $(sudo -u $SUDO_USER dbus-launch --sh-syntax)
+export DBUS_SESSION_BUS_ADDRESS
+export DBUS_SESSION_BUS_PID
 
 # Verify D-Bus session is running
 echo "Verifying D-Bus session..."
 if ! sudo -u $SUDO_USER dbus-send --session --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus.ListNames >/dev/null 2>&1; then
     echo "Error: D-Bus session not running properly"
+    echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS"
+    echo "DBUS_SESSION_BUS_PID=$DBUS_SESSION_BUS_PID"
     exit 1
 fi
 
-# Function to run systemd user commands
+# Function to run systemd user commands with proper environment
 function run_systemd_user() {
     local cmd="$1"
     sudo -u "$SUDO_USER" \
