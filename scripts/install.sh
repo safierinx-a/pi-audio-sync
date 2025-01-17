@@ -49,9 +49,17 @@ function is_package_installed() {
 function run_systemd_user() {
     local cmd="$1"
     sudo -u "$SUDO_USER" \
-    DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
     XDG_RUNTIME_DIR="$RUNTIME_DIR" \
+    DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
     systemctl --user $cmd
+}
+
+# Function to safely stop services
+function stop_services() {
+    local services=("$@")
+    for service in "${services[@]}"; do
+        run_systemd_user "stop $service" || true
+    done
 }
 
 # Update package lists first
@@ -155,8 +163,12 @@ function run_systemd_user() {
 
 # Clean up old services and state
 echo "Cleaning up old services and state..."
-run_systemd_user "stop pipewire pipewire-pulse wireplumber audio-sync 2>/dev/null || true"
-run_systemd_user "disable audio-sync 2>/dev/null || true"
+stop_services "pipewire" "pipewire-pulse" "wireplumber" "audio-sync"
+
+# Disable audio-sync service if it exists
+if run_systemd_user "is-enabled audio-sync" 2>/dev/null; then
+    run_systemd_user "disable audio-sync"
+fi
 
 # Clean up old state
 rm -rf /home/$SUDO_USER/.local/state/pipewire
