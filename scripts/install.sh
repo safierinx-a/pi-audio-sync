@@ -37,9 +37,10 @@ function run_with_timeout() {
 
 function run_as_user() {
     local cmd="$1"
-    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u $SUDO_USER)/bus" \
-    XDG_RUNTIME_DIR="/run/user/$(id -u $SUDO_USER)" \
-    sudo -u "$SUDO_USER" bash -c "$cmd"
+    sudo -u "$SUDO_USER" \
+    XDG_RUNTIME_DIR="$RUNTIME_DIR" \
+    DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" \
+    bash -c "$cmd"
 }
 
 function is_package_installed() {
@@ -303,20 +304,47 @@ run_systemd_user "daemon-reload"
 
 # Start PipeWire stack in correct order
 echo "Starting audio services..."
-run_systemd_user "stop pipewire pipewire-pulse wireplumber"
+
+# First, ensure all services are stopped
+run_systemd_user "stop pipewire pipewire-pulse wireplumber" || true
 sleep 2
 
 # Clear any existing state
-rm -rf /home/$SUDO_USER/.local/state/pipewire
-rm -rf /home/$SUDO_USER/.local/state/wireplumber
+rm -rf /home/$SUDO_USER/.local/state/pipewire/* || true
+rm -rf /home/$SUDO_USER/.local/state/wireplumber/* || true
+rm -f "$RUNTIME_DIR"/pipewire-* || true
 
+# Reload systemd configuration
 run_systemd_user "daemon-reload"
+
+# Start services in order with proper verification
+echo "Starting PipeWire socket..."
 run_systemd_user "start pipewire.socket"
 sleep 2
+
+echo "Starting PipeWire service..."
 run_systemd_user "start pipewire.service"
 sleep 2
+
+# Verify PipeWire is running before starting WirePlumber
+if ! run_as_user "pw-cli list-objects | grep core.client.driver"; then
+    echo "Error: PipeWire core not running properly"
+    run_as_user "journalctl --user -u pipewire -n 50"
+    exit 1
+fi
+
+echo "Starting WirePlumber..."
 run_systemd_user "start wireplumber.service"
 sleep 2
+
+# Verify WirePlumber is running
+if ! run_systemd_user "status wireplumber"; then
+    echo "Error: WirePlumber failed to start"
+    run_as_user "journalctl --user -u wireplumber -n 50"
+    exit 1
+fi
+
+echo "Starting PipeWire-PulseAudio services..."
 run_systemd_user "start pipewire-pulse.socket"
 sleep 2
 run_systemd_user "start pipewire-pulse.service"
